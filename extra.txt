@@ -6,5 +6,5 @@ git push
 
 
 !git pull
-!nvcc -O3 main.cu -o tracer
+!nvcc -O3 -Iinclude src/main.cu -o tracer
 !./tracer
