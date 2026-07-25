@@ -1,0 +1,10 @@
+Ctrl + S (save the file)
+git status
+git add .
+git commit -m "Added spheres"
+git push
+
+
+!git pull
+!nvcc -O3 main.cu -o tracer
+!./tracer
