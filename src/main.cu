@@ -78,7 +78,7 @@ int main(){
     vec origin(0.0f , 0.0f , 0.0f);
     vec horizontal(viewport_width , 0.0f , 0.0f);
     vec vertical(0.0f , viewport_height , 0.0f);
-    vec lower_left_corner = (origin - (horizontal / 2.0f) , (vertical / 2.0f) - vec(0.0f , 0.0f , focal_length));
+    vec lower_left_corner = (origin - (horizontal / 2.0f) - (vertical / 2.0f) - vec(0.0f , 0.0f , focal_length));
     
     
     vec* h_fb = (vec*)malloc(fb_size);
