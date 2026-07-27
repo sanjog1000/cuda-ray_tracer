@@ -25,7 +25,7 @@ __device__ vec ray_color(const ray& r , hittable** world){
     hit_record rec;
     if((*world)->hit(r, 0.001f , 10000.0f , rec)){
         // if it hits any object in the world spce then , color it with its normal
-        return 0.5f * (rec.normal.x() +1.0f, rec.normal.y() +1.0f,rec.normal.z() +1.0f)
+        return 0.5f * vec(rec.normal.x() +1.0f, rec.normal.y() +1.0f,rec.normal.z() +1.0f);
     }    
 
     // If it didn't hit the sphere, draw the sky gradient
@@ -52,7 +52,7 @@ __global__ void create_world(hittable** list , hittable** world){
         list[0] = new sphere(vec(0.0f , -100.5f, -1.0f) , 100.0f);
         list[1] = new sphere(vec(0.0f ,0.0f , -1.0f), 0.5f);
 
-        *world = hittable_list(list , 2);
+        *world = new  hittable_list(list , 2);
     }
 }
 __global__ void clear_world(hittable** list , hittable** world){
@@ -98,7 +98,7 @@ int main(){
     create_world <<<1 , 1>>>(list ,world) ;
     cudaDeviceSynchronize();
 
-    render_kernel<<< blocks , threads >>>(d_fb , image_width , image_height , lower_left_corner , horizontal , vertical , origin);
+    render_kernel<<< blocks , threads >>>(d_fb , image_width , image_height , lower_left_corner , horizontal , vertical , origin , world);
     cudaDeviceSynchronize();
 
     cudaMemcpy(h_fb , d_fb , fb_size , cudaMemcpyDeviceToHost);
@@ -123,7 +123,7 @@ int main(){
 
     clear_world <<< 1,1 >>>(list , world);
     cudaDeviceSynchronize();
-    
+
     cudaFree(d_fb);
     free(h_fb);
     cudaFree(world);
