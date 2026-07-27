@@ -25,6 +25,7 @@ public:
         e[0] = v.e[0];
         e[1] = v.e[1];
         e[2] = v.e[2];
+        return *this;
     }  
     __host__ __device__ vec& operator += (const vec& v){
         e[0] += v.e[0];
