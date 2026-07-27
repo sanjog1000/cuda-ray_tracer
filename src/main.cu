@@ -25,7 +25,7 @@ __device__ vec ray_color(const ray& r , hittable** world){
     hit_record rec;
     if((*world)->hit(r, 0.001f , 10000.0f , rec)){
         // if it hits any object in the world spce then , color it with its normal
-        return 0.5f * vec(rec.normal.x() +1.0f, rec.normal.y() +1.0f,rec.normal.z() +1.0f);
+        return vec(rec.normal.x() +1.0f, rec.normal.y() +1.0f,rec.normal.z() +1.0f) * 0.5f;
     }    
 
     // If it didn't hit the sphere, draw the sky gradient
