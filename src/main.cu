@@ -5,35 +5,40 @@
 #include"hittable.h"
 #include"hittable_list.h"
 #include"sphere.h"
+#include "camera.h"
+#include "material.h"
 
-__device__ bool hit_sphere(const vec& centre , float radius , const ray& r){
-    vec oc = r.origin() - centre;
-    float a = dot(r.direction() , r.direction());
-    float b = 2.0f * dot(r.direction() , oc );
-    float c = dot(oc , oc) - radius*radius ;
+class camera;
 
-    float discriminant = b*b - 4.0f *a*c ;
-    
-    if(discriminant < 0.0f){
-        return -1.0f;
-    }else{
-        return (-b - sqrtf(discriminant)) / (2.0f * a );
+__device__ vec ray_color(const ray& r , hittable** world , curandState* local_state){
+    vec curr_attenuated(1.0f ,1.0f,1.0f);
+    ray curr_ray = r;
+
+    for(int i = 0 ; i < 30 ;i++){
+        hit_record rec;
+
+        if((*world)->hit(curr_ray , 0.001f , 100000.0f , rec)){
+            ray scattered ;
+            vec attenuated;
+
+            if(rec.mat->scatter(curr_ray,rec , attenuated ,scattered , local_state)){
+                curr_attenuated *= attenuated;  // multiply the curr color with the obj's color
+                
+                curr_ray = scattered;   // here the scattered ray becomes the current ray
+            }else{
+                return vec(0.0f, 0.0f, 0.0f);
+            }
+        }else{
+            // If it didn't hit the sphere, draw the sky gradient
+            vec unit_direction = unit_vector(curr_ray.direction());
+            float t = 0.5f * (unit_direction.y() + 1.0f);
+            return  (1.0f - t) * curr_attenuated * vec(1.0f , 1.0f , 1.0f) + t * vec(0.5f , 0.7f , 1.0f) ; 
+        }
     }
+    // return black as even after many bounces it didnt reach the sky --> it is trapped in some dark place
+    return vec(0.0f, 0.0f, 0.0f);
 }
-
-__device__ vec ray_color(const ray& r , hittable** world){
-    hit_record rec;
-    if((*world)->hit(r, 0.001f , 10000.0f , rec)){
-        // if it hits any object in the world spce then , color it with its normal
-        return vec(rec.normal.x() +1.0f, rec.normal.y() +1.0f,rec.normal.z() +1.0f) * 0.5f;
-    }    
-
-    // If it didn't hit the sphere, draw the sky gradient
-    vec unit_direction = unit_vector(r.direction());
-    float t = 0.5f * (unit_direction.y() + 1.0f);
-    return  vec(1.0f , 1.0f , 1.0f) * (1.0f - t)  +  vec(0.5f , 0.7f , 1.0f) * t; 
-}
-__global__ void render_kernel(vec* fb , int max_x , int max_y , vec lower_left_corner , vec horizontal ,vec vertical , vec origin, hittable** world){
+__global__ void render_kernel(vec* fb , int max_x , int max_y , vec lower_left_corner , vec horizontal ,vec vertical , vec origin, camera** cam , hittable** world , curandState* local_state){
     int i = blockDim.x * blockIdx.x + threadIdx.x ;
     int j = blockDim.y * blockIdx.y + threadIdx.y;
 
@@ -41,11 +46,11 @@ __global__ void render_kernel(vec* fb , int max_x , int max_y , vec lower_left_c
 
     float u = float(i) / float(max_x - 1);
     float v = float(j) / float(max_y - 1);
-
-    ray r(origin , lower_left_corner + horizontal*u + vertical*v - origin);
+    
+    ray r = (*cam)->get_ray(u,v);
 
     int pixel_idx = j * max_x + i;
-    fb[pixel_idx] = ray_color(r , world);;    
+    fb[pixel_idx] = ray_color(r , world , local_state);;    
 }
 __global__ void create_world(hittable** list , hittable** world){
     if(threadIdx.x == 0 && blockIdx.x == 0){
@@ -95,7 +100,7 @@ int main(){
     hittable** world;
     cudaMalloc((void**)&world , sizeof(hittable*));
 
-    create_world <<<1 , 1>>>(list ,world) ;
+    create_world <<< 1 , 1>>>(list ,world) ;
     cudaDeviceSynchronize();
 
     render_kernel<<< blocks , threads >>>(d_fb , image_width , image_height , lower_left_corner , horizontal , vertical , origin , world);

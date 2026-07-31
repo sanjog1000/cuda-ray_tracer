@@ -24,8 +24,8 @@ __device__ bool hittable_list::hit(const ray& r , float t_min , float t_max , hi
     for(int i = 0 ; i < list_size ; i++){
         if(list[i]->hit(r , t_min , closest_so_far , temp_rec)){
             hit_anything = true;
-            closest_so_far = rec.t;     // new closest distance
-            temp_rec = rec;
+            closest_so_far = temp_rec.t;     // new closest distance
+            rec = temp_rec;
         }
     }
     return hit_anything ;

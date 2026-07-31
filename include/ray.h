@@ -19,6 +19,6 @@ public:
     __host__ __device__ vec direction() const{return dir;}
 
     // ray eqn : P(T) = A + t * B  
-    __host__ __device__ vec parametric_eqn(float t) const {return (orig + dir * t) ;}
+    __host__ __device__ vec parametric_eqn(float t) const {return (orig + t * dir) ;}
 };
 #endif

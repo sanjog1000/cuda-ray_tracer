@@ -39,6 +39,12 @@ public:
         e[2] *= t;
         return *this;
     }
+    __host__ __device__ vec& operator*=(const vec& v ){
+        e[0]*= v.e[0];
+        e[1]*= v.e[1];
+        e[2]*= v.e[2];
+        return *this;
+    }
     __host__ __device__ vec& operator/= (const float t){
         e[0] /= t;
         e[1] /= t;
@@ -66,8 +72,8 @@ __host__ __device__ inline vec operator-(const vec& u , const vec& v){
 __host__ __device__ inline vec operator*(const vec& u , const vec& v){
     return vec(u.e[0] * v.e[0], u.e[1] * v.e[1], u.e[2] * v.e[2]);
 }
-__host__ __device__ inline vec operator*(const vec& v , float t){
-    return vec(v.e[0]*t , v.e[1]*t , v.e[2]*t);
+__host__ __device__ inline vec operator*(float t , const vec& v){
+    return vec(t*v.e[0] , t*v.e[1] , t*v.e[2]);
 }
 __host__ __device__ inline vec operator/(const vec& v , float t){
     // return (1/t) * v;

@@ -3,11 +3,13 @@
 #include"ray.h"
 #include"hittable.h"
 
+class material ;
+
 class sphere : public hittable{
 public: 
     vec centre;
     float radius;
-
+    material* mat_ptr;
 public:
     __device__ sphere() {}
     __device__ sphere(vec cen , float r) : centre(cen), radius(r) {}
@@ -39,7 +41,8 @@ __device__ bool sphere::hit(const ray& r , float t_min , float t_max , hit_recor
     rec.p = r.parametric_eqn(rec.t);
     vec outward_normal = (rec.p - centre) / radius;
     rec.set_face_normal(r , outward_normal);
-
+    rec.mat = mat_ptr;
+    
     return true;
 }
 #endif
