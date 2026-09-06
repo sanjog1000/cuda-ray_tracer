@@ -2,15 +2,7 @@
 #define MATERIAL_H
 #include"ray.h"
 #include "hittable.h"
-#include <curand_kernel.h>
-
-__device__ inline float random_float(curandState* local_state){
-    return curand_uniform(local_state);
-}
-
-__device__ inline float random_float(float min , float max ,curandState* local_state){
-    return min + (max - min) * curand_uniform(local_state); 
-}
+#include "random.h"
 
 __device__ inline vec random_unit_sphere(curandState* local_state){
     while(true){
@@ -19,16 +11,17 @@ __device__ inline vec random_unit_sphere(curandState* local_state){
             random_float(-1.0f ,1.0f , local_state),
             random_float(-1.0f ,1.0f , local_state)
         );
-        if(p.length_squared() >= 1) continue;
+        float len_sq = p.length_squared(); 
+        if(len_sq >= 1.0f || len_sq < 1e-8f) continue;
 
         return unit_vector(p) ;
     }
 }
-__device__ inline vec reflect(const vec& v , const vec& n){
+__host__ __device__ inline vec reflect(const vec& v , const vec& n){
     return v - 2.0f * dot(v,n) * n ;  
 }
 
-__device__ inline vec refract(const vec& r_in , const vec& n , float refraction_ratio){
+__host__ __device__ inline vec refract(const vec& r_in , const vec& n , float refraction_ratio){
     float cos_theta = fmin(dot(-r_in, n), 1.0f);
     vec r_out_perp = refraction_ratio * (r_in + cos_theta * n);
     vec r_out_parallel = -sqrtf(fabsf(1.0f - (r_out_perp.length_squared()))) * n;
@@ -36,7 +29,7 @@ __device__ inline vec refract(const vec& r_in , const vec& n , float refraction_
     return (r_out_parallel + r_out_perp) ;
 }
 // Probability that the surface acts like a mirror -- it is a shortcut that mimicks frensel's effect
-__device__ inline float schlick(float cosine , float ref_idx){
+__host__ __device__ inline float schlick(float cosine , float ref_idx){
     float r0 = (1 - ref_idx) / (1 + ref_idx);
     r0 = r0*r0;
     float reflectance =  r0 + ((1 - r0) * powf((1 - cosine) , 5));
@@ -67,7 +60,7 @@ public:
     vec albedo;
     float fuzz;
 
-    __device__ metal(const vec& a , float f) : albedo(a) , fuzz(f < 1.0f ? f : 1.0f) {}
+    __device__ metal(const vec& a , float f) : albedo(a) , fuzz(f < 0.0f ? 0.0f : (f < 1.0f ? f : 1.0f) ) {}
     
     __device__ virtual bool scatter(const ray& r_in , const hit_record& rec , vec& attenuation ,ray& scattered , curandState* local_state)const override{
         // calculate the perfect reflection : r = v - 2(v.n)*n
@@ -107,6 +100,24 @@ public:
         }
 
         scattered = ray(rec.p , direction);
+        return true;
+    }
+};
+
+class isotropic : public material {
+public:
+    vec albedo;
+    __device__ isotropic(vec a) : albedo(a) {}
+
+    __device__ virtual bool scatter(const ray& r_in , const hit_record& rec , vec& attenuation ,ray& scattered , curandState* local_state) const override{
+        // generate a random vector inside a 3D sphere.
+        vec random_direction = random_unit_sphere(local_state);
+        
+        // after hitting the particle : fire a new ray 
+        // starting exactly at the dust particle( rec.p) and shoot at random dirn.
+        scattered = ray(rec.p , random_direction);
+
+        attenuation = albedo;
         return true;
     }
 };

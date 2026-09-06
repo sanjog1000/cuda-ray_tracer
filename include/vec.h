@@ -58,6 +58,9 @@ public:
     __host__ __device__ float length() const {
         return sqrtf(length_squared());
     }
+    __host__ __device__ inline vec unit_vector(){
+        return *this / length();
+    }
 };
 
 inline std::ostream& operator<<(std::ostream& out , const vec& v){   // __host__ __device__ not used because it is cpu property
@@ -74,6 +77,9 @@ __host__ __device__ inline vec operator*(const vec& u , const vec& v){
 }
 __host__ __device__ inline vec operator*(float t , const vec& v){
     return vec(t*v.e[0] , t*v.e[1] , t*v.e[2]);
+}
+__host__ __device__ inline vec operator*(const vec& v, float t){
+    return t * v;
 }
 __host__ __device__ inline vec operator/(const vec& v , float t){
     // return (1/t) * v;

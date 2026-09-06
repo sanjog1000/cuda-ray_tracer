@@ -2,16 +2,18 @@
 #define CAMERA_H
 #include "ray.h"
 #include "vec.h"
+#include "random.h"
 
 __device__ inline vec random_unit_disk(curandState* local_state){
     while(true){
         vec p = vec(
             random_float(-1.0f ,1.0f , local_state),
-            random_float(-1.0f ,1.0f , local_state), 0.0f
+            random_float(-1.0f ,1.0f , local_state), 
+            0.0f
         );
         if(p.length_squared() >= 1) continue;
 
-        return unit_vector(p) ;
+        return p ;
     }
 }
 
@@ -22,10 +24,11 @@ public:
     vec horizontal;
     vec vertical;
     vec u , v , w;  // u - camrera's right ; v - camera's up ; w - camera's backward
+    
     float focus_dist;
     float lens_radius;
-public:
-    __device__ camera(vec lookfrom , vec lookat , vec vup , float vfov ,float aspect_ratio , float aperture , float focus_dist) {
+
+    __host__ __device__ camera(vec lookfrom , vec lookat , vec vup , float vfov ,float aspect_ratio , float aperture , float focus_dist) : focus_dist(focus_dist) {
         
         float theta = vfov * (3.14159265f / 180.0f);    // gpu requires radians 
         float h = tan(theta / 2.0f);    //  slicing the camera's view angle by half and warpping around tan func gives h
@@ -51,7 +54,7 @@ public:
         vec rd = lens_radius * random_unit_disk(local_state);
         vec offset = rd.x() * u + rd.y() * v ;
 
-        return ray(origin + offset , s * horizontal + t* vertical - origin - offset);
+        return ray(origin + offset , lower_left_corner + s * horizontal + t* vertical - origin - offset);
     }
 };
 #endif
