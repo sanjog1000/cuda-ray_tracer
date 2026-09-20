@@ -359,14 +359,14 @@ __global__ void create_world(hittable** list , hittable** world , material** mat
             case MAT_LAMBERTIAN :
                 m = new lambertian(desc[i].albedo);
                 break;
-
+            
             case MAT_METAL:
                 m = new metal(desc[i].albedo, desc[i].param);
                 break;
 
             case MAT_DIELECTRIC:
                 m = new dielectric(desc[i].param);
-                break;
+                break;  
             case MAT_LIGHT:
                 m = new emit_light(desc[i].albedo);
                 break;
@@ -409,8 +409,8 @@ __global__ void clear_world(hittable** list, material** materials, int count) {
 // emissive surfaces, volumetrics and depth-of-field all have visually useful
 // work to do. The sphere BVH remains available for the smaller round props.
 // ---------------------------------------------------------------------
-#define NUM_EXTRA_CUBOIDS 67
-#define NUM_EXTRA_TRIANGLES 18
+#define NUM_EXTRA_CUBOIDS 47
+#define NUM_EXTRA_TRIANGLES 12
 #define NUM_EXTRA_SOLIDS (NUM_EXTRA_CUBOIDS + NUM_EXTRA_TRIANGLES)
 
 __global__ void create_extra_geometry(
@@ -431,7 +431,7 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
 
     // 1. Reflective floor.
-    extra_materials[m] = new metal(vec(0.50f, 0.53f, 0.58f), 0.15f);
+    extra_materials[m] = new metal(vec(0.38f, 0.40f, 0.45f), 0.18f);
     cuboid_boundaries[c] = new cuboid(
         vec(-10.0f, 0.0f, -20.0f), vec(10.0f, 0.22f, 2.0f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 0.0f, 0.0f), 0.0f);
@@ -531,91 +531,6 @@ __global__ void create_extra_geometry(
     }
 
     // -----------------------------------------------------------------
-    // PLATFORM RAILS / STAIR GUARDS / SUPPORTS
-    // -----------------------------------------------------------------
-
-    // Left platform: two guard posts + upper/lower rails.
-    for(int zslot = 0; zslot < 2; ++zslot){
-        float z = (zslot == 0) ? -12.45f : -7.55f;
-        extra_materials[m] = new metal(vec(0.38f, 0.42f, 0.48f), 0.14f);
-        cuboid_boundaries[c] = new cuboid(
-            vec(-8.72f, 2.55f, z-0.10f), vec(-8.42f, 4.05f, z+0.10f), extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-8.57f, 3.30f, z), 0.0f);
-        ++m; ++c;
-    }
-    for(int rail = 0; rail < 2; ++rail){
-        float y = (rail == 0) ? 4.00f : 3.20f;
-        extra_materials[m] = new metal(vec(0.30f, 0.34f, 0.40f), 0.16f);
-        cuboid_boundaries[c] = new cuboid(
-            vec(-8.72f, y-0.10f, -12.55f), vec(-8.42f, y+0.10f, -7.45f), extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-8.57f, y, -10.0f), 0.0f);
-        ++m; ++c;
-    }
-
-    // Right platform: matching guard system, with slightly different height.
-    for(int zslot = 0; zslot < 2; ++zslot){
-        float z = (zslot == 0) ? -12.45f : -7.55f;
-        extra_materials[m] = new metal(vec(0.38f, 0.42f, 0.48f), 0.14f);
-        cuboid_boundaries[c] = new cuboid(
-            vec(8.42f, 2.25f, z-0.10f), vec(8.72f, 3.85f, z+0.10f), extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.57f, 3.05f, z), 0.0f);
-        ++m; ++c;
-    }
-    for(int rail = 0; rail < 2; ++rail){
-        float y = (rail == 0) ? 3.80f : 3.05f;
-        extra_materials[m] = new metal(vec(0.30f, 0.34f, 0.40f), 0.16f);
-        cuboid_boundaries[c] = new cuboid(
-            vec(8.42f, y-0.10f, -12.55f), vec(8.72f, y+0.10f, -7.45f), extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.57f, y, -10.0f), 0.0f);
-        ++m; ++c;
-    }
-
-    // Stair guard: three posts and three stepped rail segments.
-    const float stair_guard_z[3] = {-5.05f, -6.85f, -8.65f};
-    const float stair_guard_y[3] = {1.15f, 1.75f, 2.35f};
-    for(int i = 0; i < 3; ++i){
-        extra_materials[m] = new metal(vec(0.34f, 0.38f, 0.44f), 0.17f);
-        cuboid_boundaries[c] = new cuboid(
-            vec(-4.62f, stair_guard_y[i], stair_guard_z[i]-0.10f),
-            vec(-4.34f, stair_guard_y[i]+1.15f, stair_guard_z[i]+0.10f),
-            extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-4.48f, stair_guard_y[i]+0.58f, stair_guard_z[i]), 0.0f);
-        ++m; ++c;
-    }
-    const float stair_rail_y[3] = {2.25f, 2.85f, 3.45f};
-    const float stair_rail_z0[3] = {-5.80f, -7.60f, -9.35f};
-    const float stair_rail_z1[3] = {-5.05f, -6.85f, -8.60f};
-    for(int i = 0; i < 3; ++i){
-        extra_materials[m] = new metal(vec(0.30f, 0.34f, 0.40f), 0.16f);
-        cuboid_boundaries[c] = new cuboid(
-            vec(-4.62f, stair_rail_y[i]-0.10f, stair_rail_z0[i]),
-            vec(-4.34f, stair_rail_y[i]+0.10f, stair_rail_z1[i]),
-            extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-4.48f, stair_rail_y[i], (stair_rail_z0[i]+stair_rail_z1[i])*0.5f), 0.0f);
-        ++m; ++c;
-    }
-
-    // Three support legs below each raised platform.
-    const float left_support_x[3]  = {-8.45f, -7.15f, -5.85f};
-    const float right_support_x[3] = {5.85f,  7.15f,  8.45f};
-    for(int i = 0; i < 3; ++i){
-        extra_materials[m] = new metal(vec(0.16f, 0.19f, 0.23f), 0.22f);
-        cuboid_boundaries[c] = new cuboid(
-            vec(left_support_x[i]-0.16f, 0.22f, -12.55f),
-            vec(left_support_x[i]+0.16f, 2.36f, -12.15f), extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(left_support_x[i], 1.29f, -12.35f), 0.0f);
-        ++m; ++c;
-    }
-    for(int i = 0; i < 3; ++i){
-        extra_materials[m] = new metal(vec(0.16f, 0.19f, 0.23f), 0.22f);
-        cuboid_boundaries[c] = new cuboid(
-            vec(right_support_x[i]-0.16f, 0.22f, -12.55f),
-            vec(right_support_x[i]+0.16f, 2.06f, -12.15f), extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(right_support_x[i], 1.14f, -12.35f), 0.0f);
-        ++m; ++c;
-    }
-
-    // -----------------------------------------------------------------
     // WALL PANELS / SHELVES
     // -----------------------------------------------------------------
 
@@ -630,13 +545,13 @@ __global__ void create_extra_geometry(
     }
 
     // 22-23. Side-wall architectural panels.
-    extra_materials[m] = new metal(vec(0.08f, 0.24f, 0.34f), 0.16f);
+    extra_materials[m] = new metal(vec(0.11f, 0.13f, 0.16f), 0.18f);
     cuboid_boundaries[c] = new cuboid(
         vec(-9.25f, 1.5f, -15.8f), vec(-9.0f, 5.8f, -11.0f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-9.1f, 3.6f, -13.4f), 0.0f);
     ++m; ++c;
 
-    extra_materials[m] = new metal(vec(0.34f, 0.10f, 0.08f), 0.16f);
+    extra_materials[m] = new metal(vec(0.11f, 0.13f, 0.16f), 0.18f);
     cuboid_boundaries[c] = new cuboid(
         vec(9.0f, 1.5f, -15.8f), vec(9.25f, 5.8f, -11.0f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(9.1f, 3.6f, -13.4f), 0.0f);
@@ -671,25 +586,25 @@ __global__ void create_extra_geometry(
     ++m; ++c;
 
     // 28-31. A rigid frame around the central reflective orb.
-    extra_materials[m] = new metal(vec(0.78f, 0.80f, 0.84f), 0.07f);
+    extra_materials[m] = new metal(vec(0.64f, 0.67f, 0.72f), 0.08f);
     cuboid_boundaries[c] = new cuboid(
         vec(-1.9f, 0.68f, -8.65f), vec(-1.55f, 3.65f, -8.15f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-1.72f, 2.1f, -8.4f), 0.0f);
     ++m; ++c;
 
-    extra_materials[m] = new metal(vec(0.78f, 0.80f, 0.84f), 0.07f);
+    extra_materials[m] = new metal(vec(0.64f, 0.67f, 0.72f), 0.08f);
     cuboid_boundaries[c] = new cuboid(
         vec(1.55f, 0.68f, -8.65f), vec(1.9f, 3.65f, -8.15f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(1.72f, 2.1f, -8.4f), 0.0f);
     ++m; ++c;
 
-    extra_materials[m] = new metal(vec(0.78f, 0.80f, 0.84f), 0.07f);
+    extra_materials[m] = new metal(vec(0.64f, 0.67f, 0.72f), 0.08f);
     cuboid_boundaries[c] = new cuboid(
         vec(-1.9f, 3.35f, -8.65f), vec(1.9f, 3.68f, -8.15f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 3.5f, -8.4f), 0.0f);
     ++m; ++c;
 
-    extra_materials[m] = new metal(vec(0.78f, 0.80f, 0.84f), 0.07f);
+    extra_materials[m] = new metal(vec(0.64f, 0.67f, 0.72f), 0.08f);
     cuboid_boundaries[c] = new cuboid(
         vec(-2.1f, 0.68f, -9.05f), vec(2.1f, 0.95f, -8.55f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 0.8f, -8.8f), 0.0f);
@@ -772,31 +687,31 @@ __global__ void create_extra_geometry(
     // 43-47. Emissive architectural lighting. These are intentionally
     // broad surfaces visible to the camera; the actual NEE sampler still
     // uses the central spherical key light passed to ray_color().
-    extra_materials[m] = new emit_light(vec(5.5f, 5.5f, 5.5f));
+    extra_materials[m] = new emit_light(vec(10.0f, 10.0f, 10.0f));
     cuboid_boundaries[c] = new cuboid(
         vec(-3.2f, 7.30f, -9.8f), vec(3.2f, 7.48f, -6.3f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 7.39f, -8.05f), 0.0f);
     ++m; ++c;
 
-    extra_materials[m] = new emit_light(vec(4.5f, 0.08f, 0.05f));
+    extra_materials[m] = new emit_light(vec(6.5f, 0.15f, 0.10f));
     cuboid_boundaries[c] = new cuboid(
         vec(-7.1f, 5.35f, -19.05f), vec(-2.4f, 5.55f, -18.86f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-4.75f, 5.45f, -18.96f), 0.0f);
     ++m; ++c;
 
-    extra_materials[m] = new emit_light(vec(0.05f, 1.35f, 4.8f));
+    extra_materials[m] = new emit_light(vec(0.10f, 2.0f, 6.5f));
     cuboid_boundaries[c] = new cuboid(
         vec(2.4f, 5.35f, -19.05f), vec(7.1f, 5.55f, -18.86f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(4.75f, 5.45f, -18.96f), 0.0f);
     ++m; ++c;
 
-    extra_materials[m] = new emit_light(vec(4.2f, 1.6f, 0.08f));
+    extra_materials[m] = new emit_light(vec(5.5f, 2.2f, 0.10f));
     cuboid_boundaries[c] = new cuboid(
         vec(-8.9f, 3.3f, -19.1f), vec(-8.72f, 5.8f, -18.85f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-8.81f, 4.55f, -18.98f), 0.0f);
     ++m; ++c;
 
-    extra_materials[m] = new emit_light(vec(0.20f, 1.25f, 4.8f));
+    extra_materials[m] = new emit_light(vec(0.40f, 1.8f, 5.8f));
     cuboid_boundaries[c] = new cuboid(
         vec(8.72f, 3.3f, -19.1f), vec(8.9f, 5.8f, -18.85f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.81f, 4.55f, -18.98f), 0.0f);
@@ -805,12 +720,12 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
     // GLASS PRISM: 8 triangles forming a triangular prism.
     // -----------------------------------------------------------------
-    const vec A(-4.90f, 0.85f, -9.20f);
-    const vec B(-2.55f, 0.85f, -9.20f);
-    const vec C(-3.72f, 3.80f, -9.20f);
-    const vec D(-4.90f, 0.85f, -7.00f);
-    const vec E(-2.55f, 0.85f, -7.00f);
-    const vec F(-3.72f, 3.80f, -7.00f);
+    const vec A(-4.75f, 0.78f, -8.95f);
+    const vec B(-3.05f, 0.78f, -8.95f);
+    const vec C(-3.90f, 3.15f, -8.95f);
+    const vec D(-4.75f, 0.78f, -7.15f);
+    const vec E(-3.05f, 0.78f, -7.15f);
+    const vec F(-3.90f, 3.15f, -7.15f);
 
     // Front triangle.
     extra_materials[m] = new dielectric(1.50f);
@@ -839,10 +754,10 @@ __global__ void create_extra_geometry(
     // A warm emissive plate behind it makes the refractive silhouette read
     // as a colored-glass object without changing dielectric.h.
     // -----------------------------------------------------------------
-    const vec T(3.45f, 4.35f, -8.40f);
-    const vec L(1.85f, 1.45f, -7.05f);
-    const vec R(5.05f, 1.45f, -7.05f);
-    const vec Q(3.45f, 1.05f, -10.05f);
+    const vec T(3.45f, 4.05f, -8.55f);
+    const vec L(2.05f, 1.55f, -7.25f);
+    const vec R(4.85f, 1.55f, -7.25f);
+    const vec Q(3.45f, 1.10f, -9.95f);
 
     for(int i = 0; i < 4; ++i){
         extra_materials[m] = new dielectric(1.47f);
@@ -852,40 +767,6 @@ __global__ void create_extra_geometry(
         else            final_shapes[m] = new triangle(L, Q, R, extra_materials[m]);
         ++m;
     }
-
-    // -----------------------------------------------------------------
-    // TRIANGULAR STRUCTURAL ASSEMBLY: 6 polished metal panels.
-    // Total triangle objects in the scene: 12 dielectric + 6 metal = 18.
-    // This is deliberately separate from the glass prism/crystal so the
-    // scene visibly demonstrates arbitrary triangle geometry in metal too.
-    // -----------------------------------------------------------------
-    const vec S0(-2.15f, 0.85f, -11.10f);
-    const vec S1(-0.70f, 3.55f, -11.10f);
-    const vec S2( 0.00f, 1.95f, -11.10f);
-    const vec S3( 0.70f, 3.55f, -11.10f);
-    const vec S4( 2.15f, 0.85f, -11.10f);
-    const vec S5(-1.55f, 0.85f, -10.10f);
-    const vec S6( 0.00f, 2.80f, -9.95f);
-    const vec S7( 1.55f, 0.85f, -10.10f);
-
-    const vec tri_albedo[6] = {
-        vec(0.68f, 0.72f, 0.80f), vec(0.58f, 0.64f, 0.74f),
-        vec(0.20f, 0.42f, 0.55f), vec(0.54f, 0.20f, 0.18f),
-        vec(0.72f, 0.74f, 0.78f), vec(0.30f, 0.48f, 0.55f)
-    };
-
-    extra_materials[m] = new metal(tri_albedo[0], 0.09f);
-    final_shapes[m] = new triangle(S0, S1, S2, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(tri_albedo[1], 0.12f);
-    final_shapes[m] = new triangle(S2, S3, S4, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(tri_albedo[2], 0.10f);
-    final_shapes[m] = new triangle(S0, S5, S2, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(tri_albedo[3], 0.12f);
-    final_shapes[m] = new triangle(S2, S7, S4, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(tri_albedo[4], 0.08f);
-    final_shapes[m] = new triangle(S5, S6, S2, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(tri_albedo[5], 0.10f);
-    final_shapes[m] = new triangle(S2, S6, S7, extra_materials[m]); ++m;
 
     // Sphere BVH is one entry in the outer list; all architectural shapes
     // remain directly accessible as a small flat additive layer for now.
@@ -941,40 +822,40 @@ __global__ void create_volumetrics(
 
     // 1. Thin floor-level haze.
     fog_boundaries[idx] = new cuboid(
-        vec(-9.2f, 0.05f, -18.5f), vec(9.2f, 0.62f, -2.0f), nullptr);
+        vec(-9.2f, 0.05f, -18.5f), vec(9.2f, 0.70f, -2.0f), nullptr);
     fog_materials[idx] = new isotropic(vec(0.88f, 0.90f, 0.94f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.011f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.035f, fog_materials[idx]);
     ++idx;
 
     // 2. Mist around the glass prism.
-    fog_boundaries[idx] = new sphere(hero0, 2.45f, nullptr);
+    fog_boundaries[idx] = new sphere(hero0, 2.20f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.82f, 0.88f, 0.95f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.013f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.020f, fog_materials[idx]);
     ++idx;
 
     // 3. Mist around the central chrome hero.
-    fog_boundaries[idx] = new sphere(hero1, 2.25f, nullptr);
+    fog_boundaries[idx] = new sphere(hero1, 2.0f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.90f, 0.92f, 0.96f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.011f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.018f, fog_materials[idx]);
     ++idx;
 
     // 4. Mist around the transparent crystal.
-    fog_boundaries[idx] = new sphere(hero2, 2.55f, nullptr);
+    fog_boundaries[idx] = new sphere(hero2, 2.35f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.82f, 0.90f, 0.96f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.011f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.018f, fog_materials[idx]);
     ++idx;
 
     // 5. Haze against the back wall for visible depth / light shafts.
     fog_boundaries[idx] = new cuboid(
         vec(-8.6f, 1.0f, -18.8f), vec(8.6f, 6.8f, -17.0f), nullptr);
     fog_materials[idx] = new isotropic(vec(0.84f, 0.88f, 0.94f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.007f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.012f, fog_materials[idx]);
     ++idx;
 
     // 6. Soft haze around the main overhead light.
-    fog_boundaries[idx] = new sphere(vec(0.0f, 5.9f, -8.7f), 2.6f, nullptr);
+    fog_boundaries[idx] = new sphere(vec(0.0f, 5.8f, -8.5f), 2.4f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.86f, 0.90f, 0.96f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.007f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.012f, fog_materials[idx]);
     ++idx;
 
     top_list[0] = *in_world;
@@ -1006,7 +887,7 @@ int main(){
     srand(42); // deterministic scene layout
 
     const float aspect_ratio = 16.0f / 9.0f;
-    const int image_width = 1920;
+    const int image_width = 800;
     const int image_height = static_cast<int>(image_width / aspect_ratio);
 
     const int total_pixels = image_height * image_width;
@@ -1022,8 +903,8 @@ int main(){
     // the renderer's NEE / mixture PDF. The broad emissive panels in the
     // geometry layer act as visible neon / architectural fixtures.
     const vec light_centre(0.0f, 6.1f, -8.5f);
-    const float light_radius = 1.05f;
-    const vec light_emission(9.5f, 8.5f, 7.5f);
+    const float light_radius = 1.55f;
+    const vec light_emission(15.0f, 12.0f, 10.0f);
 
     std::vector<sphereDesc> h_scene;
 
@@ -1032,28 +913,28 @@ int main(){
 
     // Small visible emissive accent bulbs. They are deliberately placed as
     // architectural accents rather than scattered random spheres.
-    h_scene.push_back({ vec(-7.6f, 5.6f, -15.5f), 0.28f, MAT_LIGHT, vec(3.8f, 0.05f, 0.03f), 0.0f });
-    h_scene.push_back({ vec( 7.6f, 5.6f, -15.5f), 0.28f, MAT_LIGHT, vec(0.03f, 1.05f, 3.8f), 0.0f });
-    h_scene.push_back({ vec(-5.8f, 4.9f, -12.5f), 0.22f, MAT_LIGHT, vec(3.1f, 0.70f, 0.03f), 0.0f });
-    h_scene.push_back({ vec( 5.8f, 4.9f, -12.5f), 0.22f, MAT_LIGHT, vec(0.03f, 0.70f, 3.5f), 0.0f });
+    h_scene.push_back({ vec(-7.6f, 5.6f, -15.5f), 0.28f, MAT_LIGHT, vec(5.5f, 0.08f, 0.05f), 0.0f });
+    h_scene.push_back({ vec( 7.6f, 5.6f, -15.5f), 0.28f, MAT_LIGHT, vec(0.05f, 1.5f, 5.5f), 0.0f });
+    h_scene.push_back({ vec(-5.8f, 4.9f, -12.5f), 0.22f, MAT_LIGHT, vec(4.5f, 1.0f, 0.05f), 0.0f });
+    h_scene.push_back({ vec( 5.8f, 4.9f, -12.5f), 0.22f, MAT_LIGHT, vec(0.05f, 1.0f, 4.8f), 0.0f });
 
     // Deliberate hero/supporting spheres. The architecture remains the main
     // subject; these exist to give the GGX and dielectric paths strong curved
     // surfaces to work on.
     const vec hero_spheres[3] = {
-        vec(0.0f, 2.05f, -8.20f),
-        vec(6.05f, 1.18f, -7.75f),
-        vec(-0.15f, 1.20f, -5.10f)
+        vec(0.0f, 1.95f, -8.25f),
+        vec(3.35f, 1.10f, -8.20f),
+        vec(-0.10f, 1.35f, -5.15f)
     };
 
     // Central nearly-perfect chrome orb.
-    h_scene.push_back({ hero_spheres[0], 1.45f, MAT_METAL, vec(0.93f, 0.95f, 0.98f), 0.015f });
+    h_scene.push_back({ hero_spheres[0], 1.25f, MAT_METAL, vec(0.93f, 0.95f, 0.98f), 0.015f });
 
     // Right warm diffuse hero to provide a strong non-metal reference.
-    h_scene.push_back({ hero_spheres[1], 1.00f, MAT_LAMBERTIAN, vec(0.72f, 0.16f, 0.07f), 0.0f });
+    h_scene.push_back({ hero_spheres[1], 0.95f, MAT_LAMBERTIAN, vec(0.72f, 0.16f, 0.07f), 0.0f });
 
     // Foreground glass sphere for a separate refraction path from the crystal.
-    h_scene.push_back({ hero_spheres[2], 0.90f, MAT_DIELECTRIC, vec(1.0f, 1.0f, 1.0f), 1.50f });
+    h_scene.push_back({ hero_spheres[2], 0.95f, MAT_DIELECTRIC, vec(1.0f, 1.0f, 1.0f), 1.50f });
 
     // Deliberate secondary props — no random RTIOW-style field.
     h_scene.push_back({ vec(-8.1f, 0.95f, -3.4f), 0.62f, MAT_METAL, vec(0.55f, 0.23f, 0.09f), 0.24f });
@@ -1069,34 +950,9 @@ int main(){
     h_scene.push_back({ vec( 2.8f, 0.92f, -4.1f), 0.52f, MAT_DIELECTRIC, vec(1.0f,1.0f,1.0f), 1.50f });
     h_scene.push_back({ vec(-1.6f, 0.70f, -12.1f), 0.44f, MAT_METAL, vec(0.72f,0.55f,0.26f), 0.12f });
 
-    // -------------------------------------------------------------
-    // Deliberate micro-props (no random field): 14 small components.
-    // -------------------------------------------------------------
-    // Reflective floor sentries around the hero platform.
-    h_scene.push_back({ vec(-4.35f, 0.48f, -6.25f), 0.32f, MAT_METAL, vec(0.72f, 0.76f, 0.82f), 0.10f });
-    h_scene.push_back({ vec( 4.35f, 0.52f, -6.35f), 0.34f, MAT_METAL, vec(0.62f, 0.66f, 0.72f), 0.14f });
-    h_scene.push_back({ vec(-3.85f, 0.55f, -11.35f), 0.28f, MAT_METAL, vec(0.44f, 0.58f, 0.68f), 0.18f });
-    h_scene.push_back({ vec( 3.85f, 0.55f, -11.35f), 0.28f, MAT_METAL, vec(0.68f, 0.46f, 0.40f), 0.18f });
-
-    // Small glass components near the architectural shelves.
-    h_scene.push_back({ vec(-6.9f, 2.76f, -19.0f), 0.30f, MAT_DIELECTRIC, vec(1.0f,1.0f,1.0f), 1.50f });
-    h_scene.push_back({ vec(-5.0f, 4.94f, -19.0f), 0.24f, MAT_DIELECTRIC, vec(1.0f,1.0f,1.0f), 1.48f });
-    h_scene.push_back({ vec( 5.4f, 2.77f, -19.0f), 0.26f, MAT_DIELECTRIC, vec(1.0f,1.0f,1.0f), 1.50f });
-    h_scene.push_back({ vec( 6.8f, 4.95f, -19.0f), 0.31f, MAT_DIELECTRIC, vec(1.0f,1.0f,1.0f), 1.52f });
-
-    // Mechanical spherical caps around the right-side machine / block assembly.
-    h_scene.push_back({ vec(5.15f, 1.55f, -10.15f), 0.30f, MAT_METAL, vec(0.45f,0.48f,0.54f), 0.20f });
-    h_scene.push_back({ vec(7.35f, 1.55f, -10.15f), 0.30f, MAT_METAL, vec(0.42f,0.46f,0.52f), 0.22f });
-    h_scene.push_back({ vec(5.15f, 4.25f, -11.35f), 0.24f, MAT_METAL, vec(0.65f,0.32f,0.12f), 0.15f });
-    h_scene.push_back({ vec(7.35f, 4.25f, -11.35f), 0.24f, MAT_METAL, vec(0.16f,0.38f,0.60f), 0.15f });
-
-    // Two diffuse industrial props near the stairs.
-    h_scene.push_back({ vec(-7.1f, 0.70f, -3.55f), 0.34f, MAT_LAMBERTIAN, vec(0.30f,0.34f,0.37f), 0.0f });
-    h_scene.push_back({ vec(-5.5f, 0.82f, -5.20f), 0.30f, MAT_LAMBERTIAN, vec(0.42f,0.18f,0.10f), 0.0f });
-
     const int object_count = static_cast<int>(h_scene.size());
     std::cout << "Scene sphere/light count: " << object_count << std::endl;
-    std::cout << "Architectural solids (cuboids + triangles): " << NUM_EXTRA_SOLIDS << std::endl;
+    std::cout << "Architectural solids: " << NUM_EXTRA_SOLIDS << std::endl;
 
     // -----------------------------------------------------------------
     // CAMERA
@@ -1104,12 +960,12 @@ int main(){
     // A three-quarter interior shot. Focus is on the chrome orb / crystal
     // zone while the staircase and light fixtures fall progressively out of
     // focus, giving the aperture a visible purpose.
-    vec lookfrom(4.2f, 3.05f, 0.45f);
-    vec lookat(0.0f, 2.15f, -8.65f);
+    vec lookfrom(8.6f, 4.2f, 10.8f);
+    vec lookat(0.0f, 2.6f, -8.0f);
     vec vup(0.0f, 1.0f, 0.0f);
-    const float vfov = 52.0f;
-    const float aperture = 0.11f;
-    const float focus_dist = (lookfrom - vec(0.0f, 2.1f, -8.2f)).length();
+    const float vfov = 48.0f;
+    const float aperture = 0.16f;
+    const float focus_dist = (lookfrom - vec(0.0f, 2.0f, -8.0f)).length();
 
     camera cam(lookfrom, lookat, vup, vfov, aspect_ratio, aperture, focus_dist);
 
@@ -1187,9 +1043,9 @@ int main(){
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // hero0 = glass prism center, hero1 = chrome orb, hero2 = transparent crystal.
-    const vec hero0(-3.72f, 2.10f, -8.10f);
-    const vec hero1( 0.00f, 2.05f, -8.20f);
-    const vec hero2( 3.45f, 2.25f, -8.20f);
+    const vec hero0(-3.90f, 1.95f, -8.05f);
+    const vec hero1( 0.00f, 1.95f, -8.25f);
+    const vec hero2( 3.45f, 2.20f, -8.10f);
 
     create_volumetrics<<<1,1>>>(
         d_extra_world, d_final_world,
@@ -1205,8 +1061,8 @@ int main(){
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    const int samples_per_pixel = 1024;
-    const int samples_per_batch = 32;
+    const int samples_per_pixel = 128;
+    const int samples_per_batch = 16;
     const int num_batches = (samples_per_pixel + samples_per_batch - 1) / samples_per_batch;
 
     CUDA_CHECK(cudaMemset(d_fb, 0, fb_size));
