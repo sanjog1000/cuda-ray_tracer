@@ -58,7 +58,9 @@ public:
         return sqrtf(length_squared());
     }
     __host__ __device__ inline vec unit_vector(){
-        return *this / length();
+        vec result = *this;
+        result /= length();
+        return result;
     }
 };
 
