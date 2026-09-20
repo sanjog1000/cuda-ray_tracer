@@ -996,7 +996,7 @@ int main(){
     // with enough radiance to preserve usable illumination.
     const vec light_centre(0.0f, 6.75f, -9.80f);
     const float light_radius = 1.20f;
-    const vec light_emission(24.0f, 20.0f, 17.0f);
+    const vec light_emission(28.0f, 24.0f, 21.0f);
 
     std::vector<sphereDesc> h_scene;
 
@@ -1066,10 +1066,10 @@ int main(){
     // original position while retaining the same target and 48-degree FOV.
     // The larger camera distance exposes more pillars/beams/stairs without
     // resorting to an exaggerated wide-angle lens.
-    vec lookfrom(9.90f, 4.00f, 13.60f);
-    vec lookat(0.0f, 2.60f, -8.0f);
+    vec lookfrom(7.0f, 3.4f, 1.2f);
+    vec lookat(0.0f, 2.5f, -8.5f);
     vec vup(0.0f, 1.0f, 0.0f);
-    const float vfov = 48.0f;
+    const float vfov = 55.0f;
     const float aperture = 0.10f;
     const float focus_dist = (lookfrom - hero_spheres[0]).length();
 
