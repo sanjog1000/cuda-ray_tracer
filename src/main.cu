@@ -361,14 +361,14 @@ __global__ void create_world(hittable** list , hittable** world , material** mat
             case MAT_LAMBERTIAN :
                 m = new lambertian(desc[i].albedo);
                 break;
-
+            
             case MAT_METAL:
                 m = new metal(desc[i].albedo, desc[i].param);
                 break;
 
             case MAT_DIELECTRIC:
                 m = new dielectric(desc[i].param);
-                break;
+                break;  
             case MAT_LIGHT:
                 m = new emit_light(desc[i].albedo);
                 break;
@@ -540,7 +540,7 @@ __global__ void create_extra_geometry(
     // architecture rather than a stack of boxes.  Four vertical handrail
     // posts + two long rails + two platform support columns.
 
-    const vec rail_x[2] = { -7.86f, -4.86f };
+    const float rail_x[2] = { -7.86f, -4.86f };
     const float rail_z[2] = { -5.25f, -7.55f };
     for(int side = 0; side < 2; ++side){
         for(int i = 0; i < 2; ++i){
