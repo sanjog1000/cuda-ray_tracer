@@ -18,7 +18,6 @@ public:
     __host__ __device__ float operator[](int i) const{return e[i] ;}
     __host__ __device__ float& operator[](int i) {return e[i] ;}
 
-    //  Copy Constructor
     __host__ __device__ vec(const vec& v) : e{v.e[0] ,v.e[1] , v.e[2]}  {} ;
 
     __host__ __device__ vec& operator=(const vec& v){  // Assignment operator
