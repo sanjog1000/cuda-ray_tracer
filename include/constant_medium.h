@@ -19,10 +19,11 @@ public:
         return boundary->bounding_box(output_box);
 
     }
-    __device__ virtual bool hit(const ray& r , float t_Min ,float t_max , hit_record& rec , curandState* local_state) const override;
+    __host__ __device__ virtual bool hit(const ray& r , float t_Min ,float t_max , hit_record& rec , curandState* local_state) const override;
 };
 
-__device__  bool constant_medium::hit(const ray& r , float t_min ,float t_max , hit_record& rec , curandState* local_state)const{
+__host__ __device__   bool constant_medium::hit(const ray& r , float t_min ,float t_max , hit_record& rec , curandState* local_state)const {
+    #if defined(__CUDA_ARCH__)
     hit_record rec1 , rec2;
 
     // find where the ray enters the container
@@ -63,5 +64,10 @@ __device__  bool constant_medium::hit(const ray& r , float t_min ,float t_max , 
     rec.front_face = true;
     rec.mat = phase_func;
     return true;
+
+    #else
+        return false;
+
+    #endif
 }
 #endif

@@ -7,6 +7,13 @@
 #include<utility>
 class material ;
 
+template<typename T>
+__host__ __device__ inline void device_swap(T& a , T&b){
+    T temp = a;
+    a = b;
+    b = temp;
+}
+
 class cuboid : public hittable{
 public:
     vec min_bounds;
@@ -59,9 +66,8 @@ __host__ __device__ bool cuboid::hit(const ray& r , float t_min , float t_max , 
         normal1[a] =  1.0f;   // max face outward normal
 
         if(invD < 0.0f){
-            std::swap(t0,t1);
-            
-            std::swap(normal0,normal1);    
+            device_swap(t0 , t1);
+            device_swap(normal0,normal1);
         }
 
         // Latest entering point
@@ -101,7 +107,7 @@ __host__ __device__ bool cuboid::hit(const ray& r , float t_min , float t_max , 
 
     if(hit_t  < t_min || hit_t > t_max) return false;  // after confirming hit : check whether the hit took place behind camera or too far way from the camera
 
-    rec.t = t_entry;
+    rec.t = hit_t;
     rec.p = r.parametric_eqn(rec.t);
     rec.set_face_normal(r ,hit_normal);
     rec.mat = mat_ptr ;

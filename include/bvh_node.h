@@ -11,7 +11,7 @@ __device__ inline int random_axis(curandState* local_state){
     return curand(local_state) % 3;
 }
 
-// Compare two objects using the minimum coordinate of their bounding boxes along the selected axis.
+// Compare two objects using the minimum coordinate of their bounding boxes along the selected axis
 __device__ inline bool compare(hittable* a , hittable* b , int axis){
     // returns true if a comes before b
     aabb box_a , box_b;
@@ -57,6 +57,11 @@ __device__ inline void sort_objects(hittable** src_objects , int start , int end
     sort_objects(src_objects , start , right+1 , axis);
     sort_objects(src_objects , left , end , axis);
 }
+
+#if defined(__CUDACC__)
+__device__ inline void* operator new(size_t , void* ptr){return ptr;}
+#endif
+
 class bvh_node : public hittable {
 public:
     hittable* left;
@@ -71,8 +76,14 @@ public:
         if(!box.hit(r , t_min , t_max)){
             return false;
         }
+        // leaf node stor the same obj in left and right 
+        if(left == right){
+            return left->hit(r , t_min , t_max , rec , local_state);
+        }
+
         // if the big box was : check the left and right sub-tree 
         bool hit_left = left->hit(r , t_min , t_max , rec , local_state);
+
         // if the left box is hit --> shrink the t_max as anything beyond wont be visible n useless to calculate 
         // but if not hit then keep it as t_max as it may hit the right box 
         float closest_allowed = hit_left ? rec.t : t_max ; 
@@ -98,34 +109,40 @@ public:
         output_box = box;
         return true;
     }
-
-    __device__ bvh_node(hittable** src_objects , int start , int end , curandState* local_state){
+};
+    __device__ bvh_node* build_bvh(hittable** src_objects , int start , int end , curandState* local_state , bvh_node* node_pool , int* pool_index){
         int obj_span = end - start;
-
         int axis = random_axis(local_state);
 
         sort_objects(src_objects , start ,end , axis);
+        
+        // dynamic allocation(new) is very slow as it locks single global heap memory 
+        // so pre allocated memory pool
+        // also memory leak problem using standard 'new' -- clear_world() --> clears the objecg nodes but not the internal bvh_nodes created 
+        bvh_node* node = new(&node_pool[*pool_index]) bvh_node();
+        (*pool_index)++ ;
 
         if(obj_span == 1){
-            left = right = src_objects[start];
+            node->left = node->right = src_objects[start];
         }
         else if(obj_span == 2){
-            left = src_objects[start];
-            right = src_objects[start+1];
+            node->left = src_objects[start];
+            node->right = src_objects[start+1];
         }
         else{
             int mid = start + (obj_span / 2);
 
-            left = new bvh_node(src_objects , start , mid , local_state);
-            right = new bvh_node(src_objects , mid , end , local_state);
+            node->left = build_bvh(src_objects , start , mid , local_state , node_pool , pool_index);
+            node->right = build_bvh(src_objects , mid , end , local_state , node_pool , pool_index);
         }
 
         aabb box_left , box_right;
+        node->left->bounding_box(box_left);
+        node->right->bounding_box(box_right);
 
-        left->bounding_box(box_left);
-        right->bounding_box(box_right);
+        node->box = node->surrounding_box(box_left,box_right);
 
-        box = surrounding_box(box_left,box_right);
+        return node;
     }
-};
+
 #endif

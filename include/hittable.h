@@ -24,5 +24,7 @@ public:
     __host__ __device__ virtual bool hit(const ray& r , float t_min , float t_max , hit_record& rec , curandState* local_state) const = 0 ;   
     
     __host__ __device__ virtual bool bounding_box(aabb& output_box)const =0;
+
+    __host__ __device__ virtual ~hittable() {}; 
 };
 #endif

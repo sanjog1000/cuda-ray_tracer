@@ -15,6 +15,22 @@ __device__ inline float random_float(
 ) {
     return min + (max - min) * curand_uniform(local_state);
 }
+
+// Rejection Sampling
+__device__ inline vec random_unit_sphere(curandState* local_state){
+    while(true){
+        vec p = vec(
+            random_float(-1.0f ,1.0f , local_state),
+            random_float(-1.0f ,1.0f , local_state),
+            random_float(-1.0f ,1.0f , local_state)
+        );
+        float len_sq = p.length_squared(); 
+        if(len_sq >= 1.0f || len_sq < 1e-8f) continue;
+
+        return unit_vector(p) ;
+    }
+}
+
 __device__ inline vec random_cosine_direction(curandState* local_state){
     float r1 = curand_uniform(local_state);   //  this is to pick a random number( btw 0 to 1)
     float r2 = curand_uniform(local_state);     // this is to pick a random dist from centre
@@ -29,4 +45,9 @@ __device__ inline vec random_cosine_direction(curandState* local_state){
     float z = sqrtf(1- r2);
     return vec(x,y,z);
 }
+
+__device__ inline vec sample_light_point(const vec& centre , float radius , curandState* local_state){
+    return centre + radius * random_unit_sphere(local_state);
+}
+
 #endif
