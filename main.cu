@@ -17,7 +17,7 @@
 #include "triangle.h"
 #include "constant_medium.h"
 
-#define CUDA_CHECK(call)                                                        
+#define CUDA_CHECK(call)                                                        \
     do {                                                                        \
         cudaError_t err__ = (call);                                             \
         if (err__ != cudaSuccess) {                                             \
@@ -242,7 +242,7 @@ __device__ vec ray_color(const ray& r , hittable** world , curandState* local_st
 
                 curr_attenuated *= brdf * (cosine / pdf_val);
                 curr_ray = ray(rec.p, scatter_dir);
-                add_emission = rec.mat->is_delta();
+                add_emission = true;
             } else {
                 vec light_point = sample_light_point(light_centre , light_radius , local_state);
 
@@ -275,7 +275,7 @@ __device__ vec ray_color(const ray& r , hittable** world , curandState* local_st
                 if(rec.mat->scatter(curr_ray, rec , attenuation , scattered , local_state)){
                     curr_attenuated *= attenuation;
                     curr_ray = scattered;
-                    add_emission = false;
+                    add_emission = rec.mat->is_delta();
                 }else{
                     return accumulated_light;
                 }
