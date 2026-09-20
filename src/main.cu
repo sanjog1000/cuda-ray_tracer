@@ -13,6 +13,7 @@
 #include "material.h"
 #include "pdf.h"
 #include "camera.h"
+#include "triangle.h"
 #include "cuboid.h"
 #include "constant_medium.h"
 

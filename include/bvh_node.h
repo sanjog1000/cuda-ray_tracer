@@ -58,9 +58,9 @@ __device__ inline void sort_objects(hittable** src_objects , int start , int end
     sort_objects(src_objects , left , end , axis);
 }
 
-#if defined(__CUDACC__)
-__device__ inline void* operator new(size_t , void* ptr){return ptr;}
-#endif
+// #if defined(__CUDACC__)
+// __device__ inline void* operator new(size_t , void* ptr){return ptr;}
+// #endif
 
 class bvh_node : public hittable {
 public:
