@@ -980,8 +980,8 @@ int main(){
     srand(42);
 
     const float aspect_ratio = 1.0f;            // 1:1 final showcase
-    const int image_width = 1920;
-    const int image_height = 1920;
+    const int image_width = 1024;
+    const int image_height = 1024;
 
     const int total_pixels = image_height * image_width;
     const size_t fb_size = total_pixels * sizeof(vec);
@@ -1168,8 +1168,8 @@ int main(){
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    const int samples_per_pixel = 1024;
-    const int samples_per_batch = 32;
+    const int samples_per_pixel = 64;
+    const int samples_per_batch = 16;
     const int num_batches = (samples_per_pixel + samples_per_batch - 1) / samples_per_batch;
 
     CUDA_CHECK(cudaMemset(d_fb, 0, fb_size));
