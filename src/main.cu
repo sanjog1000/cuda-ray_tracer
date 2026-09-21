@@ -1366,7 +1366,7 @@ int main(){
         1.12f,
         MAT_METAL,
         vec(0.95f, 0.97f, 1.00f),
-        0.012f
+        0.055f
     });
 
     // Smaller warm Lambertian sphere retained in the background.
@@ -1727,8 +1727,8 @@ int main(){
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Cheap validation render. Increase this only after composition is approved.
-    const int samples_per_pixel = 512;
-    const int samples_per_batch = 16;
+    const int samples_per_pixel = 2048;
+    const int samples_per_batch = 32;
     const int num_batches =
         (samples_per_pixel + samples_per_batch - 1) /
         samples_per_batch;
