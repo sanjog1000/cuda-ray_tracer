@@ -557,7 +557,7 @@ __global__ void clear_world(hittable** list, material** materials, int count) {
 // controlled depth-of-field demonstrate the renderer's full feature set.
 // There is no random RTIOW sphere field; spheres are deliberate secondary props.
 // ---------------------------------------------------------------------
-#define NUM_EXTRA_CUBOIDS 67
+#define NUM_EXTRA_CUBOIDS 51
 #define NUM_EXTRA_TRIANGLES 18
 #define NUM_EXTRA_SOLIDS (NUM_EXTRA_CUBOIDS + NUM_EXTRA_TRIANGLES)
 
@@ -932,8 +932,8 @@ __global__ void create_extra_geometry(
 
     extra_materials[m] = new lambertian(vec(0.47f, 0.50f, 0.55f));
     cuboid_boundaries[c] = new cuboid(
-        vec(7.88f, 1.10f, -15.85f), vec(8.82f, 1.82f, -14.90f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.35f, 1.46f, -15.38f), 0.0f);
+        vec(7.88f, 1.10f, -15.25f), vec(8.82f, 1.82f, -14.30f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.35f, 1.46f, -14.78f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new lambertian(vec(0.54f, 0.56f, 0.60f));
@@ -960,8 +960,8 @@ __global__ void create_extra_geometry(
     // triangle silhouette and specular edges separate cleanly.
     extra_materials[m] = new lambertian(vec(0.045f, 0.055f, 0.075f));
     cuboid_boundaries[c] = new cuboid(
-        vec(4.95f, 0.95f, -8.78f), vec(8.55f, 5.10f, -8.48f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.75f, 3.03f, -8.63f), 0.0f);
+        vec(4.95f, 2.35f, -8.78f), vec(8.55f, 5.10f, -8.48f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.75f, 3.725f, -8.63f), 0.0f);
     ++m; ++c;
 
     // 52-56. Emissive architectural lighting. These are visible accent
@@ -1048,15 +1048,15 @@ __global__ void create_extra_geometry(
     // Six metallic triangular panels make a dedicated triangle sculpture
     // beside/behind the dielectric crystal.  They are intentionally
     // differently positioned so the triangle milestone is visually obvious.
-    const vec M0(5.55f, 1.35f, -7.85f);
-    const vec M1(6.85f, 1.35f, -7.85f);
-    const vec M2(6.20f, 3.45f, -7.85f);
-    const vec N0(6.75f, 2.00f, -7.50f);
-    const vec N1(7.95f, 2.00f, -7.50f);
-    const vec N2(7.35f, 4.10f, -7.50f);
-    const vec P0(5.25f, 2.85f, -7.15f);
-    const vec P1(6.40f, 2.85f, -7.15f);
-    const vec P2(5.82f, 4.65f, -7.15f);
+    const vec M0(5.55f, 2.35f, -7.85f);
+    const vec M1(6.85f, 2.35f, -7.85f);
+    const vec M2(6.20f, 4.45f, -7.85f);
+    const vec N0(6.75f, 3.00f, -7.50f);
+    const vec N1(7.95f, 3.00f, -7.50f);
+    const vec N2(7.35f, 5.10f, -7.50f);
+    const vec P0(5.25f, 3.85f, -7.15f);
+    const vec P1(6.40f, 3.85f, -7.15f);
+    const vec P2(5.82f, 5.65f, -7.15f);
 
     const vec tri_metal(0.86f, 0.90f, 0.97f);
     extra_materials[m] = new metal(tri_metal, 0.075f);
@@ -1066,26 +1066,26 @@ __global__ void create_extra_geometry(
     extra_materials[m] = new metal(vec(0.88f, 0.92f, 0.99f), 0.07f);
     final_shapes[m] = new triangle(P0, P1, P2, extra_materials[m]); ++m;
 
-    const vec M3(5.55f, 1.35f, -7.62f);
-    const vec M4(6.85f, 1.35f, -7.62f);
-    const vec M5(6.20f, 3.45f, -7.62f);
+    const vec M3(5.55f, 2.35f, -7.62f);
+    const vec M4(6.85f, 2.35f, -7.62f);
+    const vec M5(6.20f, 4.45f, -7.62f);
     extra_materials[m] = new metal(vec(0.62f, 0.68f, 0.77f), 0.11f);
     final_shapes[m] = new triangle(M5, M4, M3, extra_materials[m]); ++m;
 
-    const vec N3(6.75f, 2.00f, -7.28f);
-    const vec N4(7.95f, 2.00f, -7.28f);
-    const vec N5(7.35f, 4.10f, -7.28f);
+    const vec N3(6.75f, 3.00f, -7.28f);
+    const vec N4(7.95f, 3.00f, -7.28f);
+    const vec N5(7.35f, 5.10f, -7.28f);
     extra_materials[m] = new metal(vec(0.74f, 0.79f, 0.88f), 0.10f);
     final_shapes[m] = new triangle(N5, N4, N3, extra_materials[m]); ++m;
 
-    const vec P3(5.25f, 2.85f, -6.92f);
-    const vec P4(6.40f, 2.85f, -6.92f);
-    const vec P5(5.82f, 4.65f, -6.92f);
+    const vec P3(5.25f, 3.85f, -6.92f);
+    const vec P4(6.40f, 3.85f, -6.92f);
+    const vec P5(5.82f, 5.65f, -6.92f);
     extra_materials[m] = new metal(vec(0.68f, 0.73f, 0.82f), 0.12f);
     final_shapes[m] = new triangle(P5, P4, P3, extra_materials[m]); ++m;
 
     // The constants above match the number of actual shapes constructed in
-    // this function: 51 cuboids + 18 triangles = 69 solids.
+    // this function: 67 cuboids + 18 triangles = 85 solids.
     if(m != NUM_EXTRA_SOLIDS || c != NUM_EXTRA_CUBOIDS){
         printf("Scene geometry count mismatch: materials/shapes=%d expected=%d, cuboids=%d expected=%d\n",
                m, NUM_EXTRA_SOLIDS, c, NUM_EXTRA_CUBOIDS);
@@ -1218,9 +1218,9 @@ int main(){
     // triangle sculpture.
     srand(42);
 
-    const float aspect_ratio = 1.0f;
+    const float aspect_ratio = 16.0f / 9.0f;
     const int image_width = 1024;
-    const int image_height = 1024;
+    const int image_height = static_cast<int>(image_width / aspect_ratio) ;
 
     const int total_pixels = image_height * image_width;
     const size_t fb_size = total_pixels * sizeof(vec);
@@ -1285,7 +1285,7 @@ int main(){
 
     for(int i = 0; i < 5; ++i){
         vec centre(
-            -4.55f,
+            -5.15f,
             stair_step_y0[i] + 0.40f,
             stair_step_z0[i] + 0.50f
         );
@@ -1305,25 +1305,25 @@ int main(){
     // they provide grazing highlights and local illumination for the triangle
     // facets, the nearby machine, and the right-side matte props.
     add_light(
-        vec(4.35f, 1.55f, -6.95f),
+        vec(5.40f, 2.46f, -7.45f),
         0.11f,
         vec(2.0f, 12.0f, 22.0f)
     );
 
     add_light(
-        vec(8.35f, 2.25f, -7.40f),
+        vec(8.35f, 2.46f, -7.40f),
         0.11f,
         vec(2.0f, 15.0f, 26.0f)
     );
 
     add_light(
-        vec(6.95f, 4.85f, -6.95f),
+        vec(6.95f, 4.72f, -8.34f),
         0.10f,
         vec(3.0f, 17.0f, 29.0f)
     );
 
     add_light(
-        vec(8.00f, 4.10f, -6.55f),
+        vec(7.95f, 4.05f, -8.34f),
         0.10f,
         vec(2.0f, 13.0f, 23.0f)
     );
