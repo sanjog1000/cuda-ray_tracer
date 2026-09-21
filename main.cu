@@ -364,14 +364,14 @@ __global__ void create_world(hittable** list , hittable** world , material** mat
             case MAT_LAMBERTIAN :
                 m = new lambertian(desc[i].albedo);
                 break;
-
+            
             case MAT_METAL:
                 m = new metal(desc[i].albedo, desc[i].param);
                 break;
 
             case MAT_DIELECTRIC:
                 m = new dielectric(desc[i].param);
-                break;
+                break;  
             case MAT_LIGHT:
                 m = new emit_light(desc[i].albedo);
                 break;
