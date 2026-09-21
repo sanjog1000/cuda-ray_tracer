@@ -1218,7 +1218,7 @@ int main(){
     // triangle sculpture.
     srand(42);
 
-    const float aspect_ratio = 16.0f / 9.0f ;
+    const float aspect_ratio = 20.0f / 9.0f ;
     const int image_width = 1024;
     const int image_height = static_cast<int>(image_width / aspect_ratio) ;
 
