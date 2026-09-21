@@ -1445,7 +1445,7 @@ int main(){
     const vec hero_spheres[3] = {
         vec(0.00f, 1.80f, -8.85f),     // chrome orb seated on central platform (top y=0.68)
         vec(6.40f, 0.88f, -14.60f),    // warm diffuse sphere seated on floor
-        vec(-1.75f, 0.94f, -6.35f)     // foreground glass sphere seated on floor
+        vec(-1.75f, 0.94f, -5.70f)     // foreground glass sphere seated on floor
     };
 
     // Central nearly-perfect chrome orb: the primary focal point.
