@@ -126,4 +126,65 @@ public:
         }
     }
 };
+
+class multi_sphere_pdf{
+public:
+    vec origin ;
+    const vec* light_centres;
+    const float* light_radii;
+    int light_count;
+
+    __device__ multi_sphere_pdf(const vec& orig,const vec* centres,const float* radii,int count) : origin(orig) , light_centres(centres) , light_radii(radii) , light_count(count) {}
+
+    __device__ float value(const vec& direction)const{
+        if(light_count <= 0){
+            return 0.0f;
+        }
+        // every light is selected with probability 1 / N.
+        float selection_probability = 1.0f / float(light_count);
+        float result = 0.0f;
+
+        for(int i = 0 ; i < light_count ; i++){
+            sphere_pdf light_pdf(origin , light_centres[i] , light_radii[i]);
+
+            // P(select light i) * PDF(direction | light i)
+            result += selection_probability * light_pdf.value(direction);
+        }
+        return result;
+    }
+    __device__ vec generate(curandState* local_state){
+        if(light_count <= 0){
+            return random_unit_sphere(local_state);
+        }
+
+        int light_index = int(curand_uniform(local_state) * float(light_count));
+        //  if random number lands exactly at the upper boundary.
+        if(light_index >= light_count){
+            light_index = light_count - 1;
+        }
+
+        sphere_pdf selected_light(origin , light_centres[light_index] , light_radii[light_index]);
+        return selected_light.generate(local_state);
+    }
+};
+
+class multi_mixture_pdf{
+public:
+    cosine_pdf cosine_part;
+    multi_sphere_pdf light_part;
+
+    __device__ multi_mixture_pdf(const cosine_pdf& cosine, const multi_sphere_pdf& lights) : cosine_part(cosine), light_part(lights) {}
+    __device__ float value(const vec& direction) const{
+        return 0.5f * cosine_part.value(direction) + 0.5f * light_part.value(direction);
+    }
+    __device__ vec generate(curandState* local_state){
+        // 50% -> BRDF/cosine sampling
+        if(curand_uniform(local_state) <0.5f){
+            return cosine_part.generate(local_state);
+        }
+
+        // 50%-> randomly selected spherical light
+        return light_part.generate(local_state);
+    }
+};
 #endif

@@ -194,119 +194,234 @@ public:
     }
 };
 
-__device__ vec ray_color(const ray& r , hittable** world , curandState* local_state , const vec& light_centre , float light_radius , vec light_emission){
-    vec curr_attenuated(1.0f,1.0f,1.0f);
-    vec accumulated_light(0.0f,0.0f,0.0f);
+// -----------------------------------------------------------------------------
+// Path tracer core
+//
+// Lighting model:
+//   * One central white spherical key light.
+//   * Several small local spherical lights (staircase + right-side cluster).
+//   * Lambertian surfaces use 50/50 cosine + multi-light PDF sampling.
+//   * Non-PDF materials use explicit one-light NEE: exactly one light is
+//     selected per bounce, so the cost remains close to the previous single-
+//     light implementation instead of tracing one shadow ray per light.
+// -----------------------------------------------------------------------------
+__device__ vec ray_color(
+    const ray& r,
+    hittable** world,
+    curandState* local_state,
+    const vec* light_centres,
+    const float* light_radii,
+    const vec* light_emissions,
+    int light_count
+){
+    vec curr_attenuated(1.0f, 1.0f, 1.0f);
+    vec accumulated_light(0.0f, 0.0f, 0.0f);
 
     ray curr_ray = r;
-    float light_area = 4.0f * 3.14159265359f * light_radius * light_radius;
-    float light_pdf_area = 1.0f / light_area;
 
-    // Tracks whether emission on the *next* hit still needs to be added.
-    // - true at depth 0 (camera can see a light directly; nothing has
-    //   accounted for that yet).
-    // - true right after a pdf-sampled (lambertian) bounce, because that
-    //   path relies on *implicitly* hitting the light rather than an
-    //   explicit shadow ray (see the pdf-sampling branch below).
-    // - false right after an explicit-NEE bounce (metal), because that
-    //   branch already added the light's contribution via a shadow ray;
-    //   adding it again on a direct hit would double-count it.
+    // Camera rays may directly see an emissive sphere. A Lambertian/light-PDF
+    // sampled bounce also relies on the next ray potentially landing on a light,
+    // so emission must be collected on that next hit.
     bool add_emission = true;
 
     const int max_depth = 30;
     const int rr_start_depth = 4;
 
-    for(int depth = 0 ; depth < max_depth ; depth++){
+    for(int depth = 0; depth < max_depth; ++depth){
         hit_record rec;
-        if((*world)->hit(curr_ray,0.001f , 100000.0f , rec , local_state)){
+
+        if((*world)->hit(curr_ray, 0.001f, 100000.0f, rec, local_state)){
 
             if(add_emission){
                 accumulated_light += curr_attenuated * rec.mat->emitted();
             }
 
+            // -----------------------------------------------------------------
+            // Lambertian / PDF path
+            // -----------------------------------------------------------------
+            // 50% cosine-weighted sampling + 50% uniformly selected spherical
+            // light.  multi_mixture_pdf.value() exactly matches its generator.
+            // -----------------------------------------------------------------
             if(rec.mat->uses_pdf_sampling()){
                 cosine_pdf cos_pdf(rec.normal);
-                sphere_pdf  lgt_pdf(rec.p, light_centre, light_radius);
-                mixture_pdf mix_pdf(cos_pdf, lgt_pdf);
+
+                multi_sphere_pdf lgt_pdf(
+                    rec.p,
+                    light_centres,
+                    light_radii,
+                    light_count
+                );
+
+                multi_mixture_pdf mix_pdf(cos_pdf, lgt_pdf);
 
                 vec scatter_dir = mix_pdf.generate(local_state);
                 float pdf_val = mix_pdf.value(scatter_dir);
-                if(pdf_val < 1e-6f) return accumulated_light;
+
+                if(pdf_val < 1e-6f){
+                    return accumulated_light;
+                }
 
                 vec unit_dir = unit_vector(scatter_dir);
                 float cosine = fmaxf(0.0f, dot(rec.normal, unit_dir));
-                if(cosine <= 0.0f) return accumulated_light;
+
+                if(cosine <= 0.0f){
+                    return accumulated_light;
+                }
 
                 vec wo = -unit_vector(curr_ray.direction());
                 vec brdf = rec.mat->evaluate_brdf(unit_dir, wo, rec);
 
                 curr_attenuated *= brdf * (cosine / pdf_val);
                 curr_ray = ray(rec.p, scatter_dir);
-                add_emission = rec.mat->is_delta();
-            } else {
-                vec light_point = sample_light_point(light_centre , light_radius , local_state);
 
-                vec to_light = light_point - rec.p;
-                float distance = to_light.length();
-                vec wi = to_light / distance;
+                // A sampled light direction can directly hit an emissive sphere,
+                // so emission on the next hit must be collected.  This is also
+                // correct for cosine-generated rays that happen to hit a light.
+                add_emission = true;
+            }
+            else{
+                // -----------------------------------------------------------------
+                // Explicit next-event estimation for non-PDF materials.
+                // Select exactly ONE light, sample one point on it, and account
+                // for the 1/N light-selection probability in the area PDF.
+                // -----------------------------------------------------------------
+                if(light_count > 0){
+                    int light_index = int(
+                        curand_uniform(local_state) * float(light_count)
+                    );
 
-                float NdotL = rec.mat->is_volumetric() ? 1.0f : fmaxf(0.0f , dot(rec.normal , wi));
-                if(NdotL > 0.0f){
-                    vec light_normal = unit_vector(light_point - light_centre);
-                    float light_costheta = fmaxf(0.0f , dot(light_normal,-wi));
+                    if(light_index >= light_count){
+                        light_index = light_count - 1;
+                    }
 
-                    if(light_costheta > 0.0f){
-                        ray shadow_ray(rec.p , wi);
-                        hit_record shadow_rec;
-                        bool blocked = (*world)->hit(shadow_ray , 0.001f , distance - 0.001f , shadow_rec , local_state);
+                    const vec light_centre = light_centres[light_index];
+                    const float light_radius = light_radii[light_index];
+                    const vec light_emission = light_emissions[light_index];
 
-                        if(!blocked){
-                            vec wo = -unit_vector(curr_ray.direction());
-                            vec brdf = rec.mat->evaluate_brdf(wi , wo , rec);
+                    vec light_point = sample_light_point(
+                        light_centre,
+                        light_radius,
+                        local_state
+                    );
 
-                            vec direct_light  = brdf *  light_emission * ((NdotL * light_costheta) / (distance * distance * light_pdf_area));
-                            accumulated_light += curr_attenuated * direct_light;
+                    vec to_light = light_point - rec.p;
+                    float distance = to_light.length();
+
+                    if(distance > 1e-6f){
+                        vec wi = to_light / distance;
+
+                        float NdotL = rec.mat->is_volumetric()
+                                    ? 1.0f
+                                    : fmaxf(0.0f, dot(rec.normal, wi));
+
+                        if(NdotL > 0.0f){
+                            vec light_normal = unit_vector(
+                                light_point - light_centre
+                            );
+
+                            float light_costheta = fmaxf(
+                                0.0f,
+                                dot(light_normal, -wi)
+                            );
+
+                            if(light_costheta > 0.0f){
+                                ray shadow_ray(rec.p, wi);
+                                hit_record shadow_rec;
+
+                                bool blocked = (*world)->hit(
+                                    shadow_ray,
+                                    0.001f,
+                                    distance - 0.001f,
+                                    shadow_rec,
+                                    local_state
+                                );
+
+                                if(!blocked){
+                                    vec wo = -unit_vector(curr_ray.direction());
+                                    vec brdf = rec.mat->evaluate_brdf(wi, wo, rec);
+
+                                    // Point was sampled uniformly by area from
+                                    // the selected light, and the selected light
+                                    // itself was chosen uniformly from N lights.
+                                    float light_area =
+                                        4.0f * 3.14159265359f *
+                                        light_radius * light_radius;
+
+                                    float joint_area_pdf =
+                                        1.0f / (float(light_count) * light_area);
+
+                                    vec direct_light =
+                                        brdf * light_emission *
+                                        ((NdotL * light_costheta) /
+                                         (distance * distance * joint_area_pdf));
+
+                                    accumulated_light +=
+                                        curr_attenuated * direct_light;
+                                }
+                            }
                         }
                     }
                 }
 
+                // Continue the physical path using the material's scattering
+                // model. The explicit NEE contribution above is already accounted
+                // for, so a direct emissive hit on the next bounce is not added a
+                // second time by this branch.
                 ray scattered;
                 vec attenuation;
-                if(rec.mat->scatter(curr_ray, rec , attenuation , scattered , local_state)){
+
+                if(rec.mat->scatter(
+                    curr_ray,
+                    rec,
+                    attenuation,
+                    scattered,
+                    local_state
+                )){
                     curr_attenuated *= attenuation;
                     curr_ray = scattered;
                     add_emission = false;
-                }else{
+                }
+                else{
                     return accumulated_light;
                 }
             }
 
+            // -----------------------------------------------------------------
             // Russian roulette
+            // -----------------------------------------------------------------
             if(depth > rr_start_depth){
-                float survive = fmaxf(curr_attenuated.x(), fmaxf(curr_attenuated.y(), curr_attenuated.z()));
+                float survive = fmaxf(
+                    curr_attenuated.x(),
+                    fmaxf(curr_attenuated.y(), curr_attenuated.z())
+                );
+
                 survive = fminf(survive, 0.95f);
+
                 if(curand_uniform(local_state) > survive){
                     break;
                 }
+
                 curr_attenuated /= survive;
             }
-
-        }else{
+        }
+        else{
+            // Keep the useful non-black environment fill for rays escaping the
+            // architectural shell.
             vec unit_direction = unit_vector(curr_ray.direction());
             float t = 0.5f * (unit_direction.y() + 1.0f);
-            // Keep the original non-black environment fill.
-            // The industrial room remains dark through its materials and
-            // lighting design, but escaped rays still receive a useful sky
-            // contribution instead of collapsing the image toward black.
-            vec sky = (1.0f - t) * vec(1.0f, 1.0f, 1.0f)
-                    + t * vec(0.5f, 0.7f, 1.0f);
-            accumulated_light += curr_attenuated * sky;
 
+            vec sky =
+                (1.0f - t) * vec(1.0f, 1.0f, 1.0f) +
+                t * vec(0.5f, 0.7f, 1.0f);
+
+            accumulated_light += curr_attenuated * sky;
             return accumulated_light;
         }
     }
+
     return accumulated_light;
 }
+
 __global__ void init_random_states(curandState* states , int max_x , int max_y){
     int i = blockDim.x * blockIdx.x + threadIdx.x ;
     int j = blockDim.y * blockIdx.y + threadIdx.y;
@@ -322,8 +437,20 @@ __global__ void init_random_states(curandState* states , int max_x , int max_y){
     );
 }
 
-__global__ void render_kernel(vec* fb , int max_x , int max_y , camera cam , hittable** world , curandState* states , vec light_centre , float light_radius , vec light_emission , int samples_this_batch){
-    int i = blockDim.x * blockIdx.x + threadIdx.x ;
+__global__ void render_kernel(
+    vec* fb,
+    int max_x,
+    int max_y,
+    camera cam,
+    hittable** world,
+    curandState* states,
+    const vec* light_centres,
+    const float* light_radii,
+    const vec* light_emissions,
+    int light_count,
+    int samples_this_batch
+){
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
     int j = blockDim.y * blockIdx.y + threadIdx.y;
 
     if((i >= max_x) || (j >= max_y)) return;
@@ -333,13 +460,28 @@ __global__ void render_kernel(vec* fb , int max_x , int max_y , camera cam , hit
     curandState local_state = states[pixel_idx];
 
     vec color_sum(0.0f, 0.0f, 0.0f);
-    for(int s = 0 ; s < samples_this_batch ; s++){
-        // jitter the sample within the pixel for antialiasing
-        float u = (float(i) + curand_uniform(&local_state)) / float(max_x - 1);
-        float v = (float(j) + curand_uniform(&local_state)) / float(max_y - 1);
 
-        ray r = cam.get_ray(u,v,&local_state);
-        color_sum += ray_color(r , world , &local_state , light_centre , light_radius , light_emission);
+    for(int s = 0; s < samples_this_batch; ++s){
+        // Jitter inside the pixel for antialiasing.
+        float u =
+            (float(i) + curand_uniform(&local_state)) /
+            float(max_x - 1);
+
+        float v =
+            (float(j) + curand_uniform(&local_state)) /
+            float(max_y - 1);
+
+        ray r = cam.get_ray(u, v, &local_state);
+
+        color_sum += ray_color(
+            r,
+            world,
+            &local_state,
+            light_centres,
+            light_radii,
+            light_emissions,
+            light_count
+        );
     }
 
     fb[pixel_idx] += color_sum;
@@ -349,10 +491,10 @@ __global__ void render_kernel(vec* fb , int max_x , int max_y , camera cam , hit
 enum MaterialType {MAT_LAMBERTIAN, MAT_METAL, MAT_DIELECTRIC , MAT_LIGHT};
 struct sphereDesc{
     vec centre;
-    float radius ;
+    float radius;
     MaterialType mat_type;
-    vec albedo;     // used by lambertian , metal
-    float param; // roughness for metal, ir for dielectric
+    vec albedo;     // used by lambertian, metal, light emission
+    float param;    // roughness for metal, ir for dielectric
 };
 
 __global__ void create_world(hittable** list , hittable** world , material** materials ,sphereDesc* desc , int count , bvh_node* node_pool){
@@ -415,7 +557,7 @@ __global__ void clear_world(hittable** list, material** materials, int count) {
 // controlled depth-of-field demonstrate the renderer's full feature set.
 // There is no random RTIOW sphere field; spheres are deliberate secondary props.
 // ---------------------------------------------------------------------
-#define NUM_EXTRA_CUBOIDS 55
+#define NUM_EXTRA_CUBOIDS 51
 #define NUM_EXTRA_TRIANGLES 18
 #define NUM_EXTRA_SOLIDS (NUM_EXTRA_CUBOIDS + NUM_EXTRA_TRIANGLES)
 
@@ -547,7 +689,7 @@ __global__ void create_extra_geometry(
     const float rail_z[2] = { -5.25f, -7.55f };
     for(int side = 0; side < 2; ++side){
         for(int i = 0; i < 2; ++i){
-            extra_materials[m] = new metal(vec(0.56f, 0.60f, 0.66f), 0.16f);
+            extra_materials[m] = new metal(vec(0.68f, 0.72f, 0.80f), 0.13f);
             float x = rail_x[side];
             float z = rail_z[i];
             cuboid_boundaries[c] = new cuboid(
@@ -558,7 +700,7 @@ __global__ void create_extra_geometry(
             ++m; ++c;
         }
 
-        extra_materials[m] = new metal(vec(0.68f, 0.72f, 0.80f), 0.12f);
+        extra_materials[m] = new metal(vec(0.78f, 0.82f, 0.90f), 0.09f);
         float x = rail_x[side];
         cuboid_boundaries[c] = new cuboid(
             vec(x-0.09f, 2.55f, -8.90f),
@@ -735,7 +877,95 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-5.75f, 0.95f, -16.1f), 0.0f);
     ++m; ++c;
 
-    // 43-47. Emissive architectural lighting. These are intentionally
+    // -----------------------------------------------------------------
+    // READABILITY PROPS: SMALL LAMBERTIAN SURFACES
+    // -----------------------------------------------------------------
+    // These are deliberately placed around the staircase and right-side
+    // machinery so the new local lights have nearby diffuse surfaces that
+    // visibly receive and display their warm/cool illumination.
+
+    // Left / staircase zone: three small matte equipment boxes.
+    extra_materials[m] = new lambertian(vec(0.50f, 0.52f, 0.56f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(-8.85f, 0.30f, -4.15f), vec(-8.05f, 0.92f, -3.45f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-8.45f, 0.61f, -3.80f), 0.0f);
+    ++m; ++c;
+
+    extra_materials[m] = new lambertian(vec(0.46f, 0.49f, 0.53f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(-8.75f, 0.55f, -10.25f), vec(-7.95f, 1.18f, -9.35f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-8.35f, 0.86f, -9.80f), 0.0f);
+    ++m; ++c;
+
+    extra_materials[m] = new lambertian(vec(0.52f, 0.54f, 0.58f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(-5.05f, 2.72f, -12.55f), vec(-4.20f, 3.38f, -11.70f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-4.63f, 3.05f, -12.12f), 0.0f);
+    ++m; ++c;
+
+    // Two matte architectural wall panels on the left.
+    extra_materials[m] = new lambertian(vec(0.43f, 0.46f, 0.50f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(-9.25f, 1.25f, -7.10f), vec(-9.02f, 2.95f, -5.45f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-9.14f, 2.10f, -6.28f), 0.0f);
+    ++m; ++c;
+
+    extra_materials[m] = new lambertian(vec(0.48f, 0.50f, 0.54f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(-9.25f, 3.50f, -11.15f), vec(-9.02f, 5.30f, -9.20f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-9.14f, 4.40f, -10.18f), 0.0f);
+    ++m; ++c;
+
+    // One small matte platform-side object.
+    extra_materials[m] = new lambertian(vec(0.55f, 0.57f, 0.61f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(-8.15f, 2.68f, -14.15f), vec(-7.15f, 3.45f, -13.20f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-7.65f, 3.06f, -13.68f), 0.0f);
+    ++m; ++c;
+
+    // Right-side matte machine components / crates.
+    extra_materials[m] = new lambertian(vec(0.50f, 0.53f, 0.58f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(8.00f, 0.28f, -12.35f), vec(8.82f, 0.95f, -11.55f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.41f, 0.62f, -11.95f), 0.0f);
+    ++m; ++c;
+
+    extra_materials[m] = new lambertian(vec(0.47f, 0.50f, 0.55f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(7.88f, 1.10f, -15.85f), vec(8.82f, 1.82f, -14.90f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.35f, 1.46f, -15.38f), 0.0f);
+    ++m; ++c;
+
+    extra_materials[m] = new lambertian(vec(0.54f, 0.56f, 0.60f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(4.00f, 0.82f, -14.75f), vec(4.85f, 1.50f, -13.90f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(4.43f, 1.16f, -14.33f), 0.0f);
+    ++m; ++c;
+
+    // Two small matte vertical architectural modules on the right wall.
+    extra_materials[m] = new lambertian(vec(0.44f, 0.47f, 0.52f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(8.95f, 1.40f, -6.45f), vec(9.22f, 3.30f, -5.45f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(9.09f, 2.35f, -5.95f), 0.0f);
+    ++m; ++c;
+
+    extra_materials[m] = new lambertian(vec(0.48f, 0.50f, 0.55f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(8.95f, 3.65f, -10.35f), vec(9.22f, 5.60f, -9.05f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(9.09f, 4.63f, -9.70f), 0.0f);
+    ++m; ++c;
+
+    // Dark matte backdrop directly behind the metallic triangle sculpture.
+    // It is intentionally darker than the surrounding architecture so the
+    // triangle silhouette and specular edges separate cleanly.
+    extra_materials[m] = new lambertian(vec(0.045f, 0.055f, 0.075f));
+    cuboid_boundaries[c] = new cuboid(
+        vec(4.95f, 0.95f, -8.78f), vec(8.55f, 5.10f, -8.48f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.75f, 3.03f, -8.63f), 0.0f);
+    ++m; ++c;
+
+    // 52-56. Emissive architectural lighting. These are visible accent
+    // surfaces; local spherical lights provide the actual NEE illumination.
     // broad surfaces visible to the camera; the actual NEE sampler still
     // uses the central spherical key light passed to ray_color().
     extra_materials[m] = new emit_light(vec(8.0f, 9.0f, 11.0f));
@@ -828,34 +1058,34 @@ __global__ void create_extra_geometry(
     const vec P1(6.40f, 2.85f, -7.15f);
     const vec P2(5.82f, 4.65f, -7.15f);
 
-    const vec tri_metal(0.72f, 0.76f, 0.84f);
-    extra_materials[m] = new metal(tri_metal, 0.10f);
+    const vec tri_metal(0.86f, 0.90f, 0.97f);
+    extra_materials[m] = new metal(tri_metal, 0.075f);
     final_shapes[m] = new triangle(M0, M1, M2, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(tri_metal, 0.15f);
+    extra_materials[m] = new metal(vec(0.82f, 0.87f, 0.95f), 0.09f);
     final_shapes[m] = new triangle(N0, N1, N2, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(tri_metal, 0.12f);
+    extra_materials[m] = new metal(vec(0.88f, 0.92f, 0.99f), 0.07f);
     final_shapes[m] = new triangle(P0, P1, P2, extra_materials[m]); ++m;
 
     const vec M3(5.55f, 1.35f, -7.62f);
     const vec M4(6.85f, 1.35f, -7.62f);
     const vec M5(6.20f, 3.45f, -7.62f);
-    extra_materials[m] = new metal(vec(0.46f, 0.50f, 0.58f), 0.18f);
+    extra_materials[m] = new metal(vec(0.62f, 0.68f, 0.77f), 0.11f);
     final_shapes[m] = new triangle(M5, M4, M3, extra_materials[m]); ++m;
 
     const vec N3(6.75f, 2.00f, -7.28f);
     const vec N4(7.95f, 2.00f, -7.28f);
     const vec N5(7.35f, 4.10f, -7.28f);
-    extra_materials[m] = new metal(vec(0.58f, 0.62f, 0.70f), 0.16f);
+    extra_materials[m] = new metal(vec(0.74f, 0.79f, 0.88f), 0.10f);
     final_shapes[m] = new triangle(N5, N4, N3, extra_materials[m]); ++m;
 
     const vec P3(5.25f, 2.85f, -6.92f);
     const vec P4(6.40f, 2.85f, -6.92f);
     const vec P5(5.82f, 4.65f, -6.92f);
-    extra_materials[m] = new metal(vec(0.42f, 0.46f, 0.54f), 0.20f);
+    extra_materials[m] = new metal(vec(0.68f, 0.73f, 0.82f), 0.12f);
     final_shapes[m] = new triangle(P5, P4, P3, extra_materials[m]); ++m;
 
     // The constants above match the number of actual shapes constructed in
-    // this function: 39 cuboids + 18 triangles = 57 solids.
+    // this function: 51 cuboids + 18 triangles = 69 solids.
     if(m != NUM_EXTRA_SOLIDS || c != NUM_EXTRA_CUBOIDS){
         printf("Scene geometry count mismatch: materials/shapes=%d expected=%d, cuboids=%d expected=%d\n",
                m, NUM_EXTRA_SOLIDS, c, NUM_EXTRA_CUBOIDS);
@@ -947,7 +1177,7 @@ __global__ void create_volumetrics(
     ++idx;
 
     // 6. Soft haze around the main overhead light.
-    fog_boundaries[idx] = new sphere(vec(0.0f, 6.30f, -8.35f), 2.0f, nullptr);
+    fog_boundaries[idx] = new sphere(vec(0.0f, 6.65f, -9.15f), 1.70f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.86f, 0.90f, 0.96f));
     fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.006f, fog_materials[idx]);
     ++idx;
@@ -978,14 +1208,17 @@ __global__ void clear_volumetrics(
 }
 
 int main(){
-    // Final deterministic showcase scene.  All 14 final layout requirements
-    // are encoded below; the scene remains entirely in main.cu and keeps the
-    // existing renderer/header architecture intact.
+    // -----------------------------------------------------------------
+    // FINAL DETERMINISTIC SHOWCASE SCENE
+    // -----------------------------------------------------------------
+    // The scene remains square and architectural.  The lighting is now
+    // distributed across one central key plus small local spherical lights,
+    // while small Lambertian props are deliberately placed where those local
+    // lights can reveal the staircase, guard rails, right-side machinery and
+    // triangle sculpture.
     srand(42);
 
-    const float aspect_ratio = 1.0f;            // 1:1 final showcase
-    // Quick validation render.  Once the composition is approved, use
-    // 1920x1920 and the desired high SPP for the final showcase render.
+    const float aspect_ratio = 1.0f;
     const int image_width = 1024;
     const int image_height = 1024;
 
@@ -996,85 +1229,249 @@ int main(){
     CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
 
     // -----------------------------------------------------------------
-    // FINAL LIGHTING DESIGN
+    // LIGHTING DESIGN
     // -----------------------------------------------------------------
-    // Central NEE-sampled key: smaller apparent emitter, slightly moved up/back,
-    // with enough radiance to preserve usable illumination.
-    const vec light_centre(0.0f, 6.30f, -8.35f);
-    const float light_radius = 1.05f;
-    const vec light_emission(30.0f, 26.0f, 22.0f);
+    // The central key is deliberately smaller on camera than before.  Its
+    // radiance is not increased; the local lights now carry the near-field
+    // illumination so the scene does not depend on making the key enormous.
+    const vec central_light_centre(0.0f, 6.65f, -9.15f);
+    const float central_light_radius = 0.78f;
+    const vec central_light_emission(30.0f, 26.0f, 22.0f);
 
     std::vector<sphereDesc> h_scene;
+    std::vector<vec> h_light_centres;
+    std::vector<float> h_light_radii;
+    std::vector<vec> h_light_emissions;
 
-    // 6. Main white key: smaller on camera, still responsible for the bulk of
-    // neutral illumination.  Colored architecture below supplies the visual identity.
-    h_scene.push_back({ light_centre, light_radius, MAT_LIGHT, light_emission, 0.0f });
+    auto add_light = [&](const vec& centre, float radius, const vec& emission){
+        h_scene.push_back({
+            centre,
+            radius,
+            MAT_LIGHT,
+            emission,
+            0.0f
+        });
 
-    // 11. Symmetric architectural accent bulbs: red/orange on the left,
-    // cyan/blue on the right.  They are deterministic, not randomly scattered.
-    h_scene.push_back({ vec(-7.6f, 5.6f, -15.5f), 0.26f, MAT_LIGHT, vec(5.8f, 0.10f, 0.05f), 0.0f });
-    h_scene.push_back({ vec( 7.6f, 5.6f, -15.5f), 0.26f, MAT_LIGHT, vec(0.05f, 1.8f, 6.0f), 0.0f });
-    h_scene.push_back({ vec(-5.8f, 4.9f, -12.5f), 0.20f, MAT_LIGHT, vec(5.0f, 1.0f, 0.06f), 0.0f });
-    h_scene.push_back({ vec( 5.8f, 4.9f, -12.5f), 0.20f, MAT_LIGHT, vec(0.06f, 1.2f, 5.2f), 0.0f });
-
-    // 1-2-4-9. Hero/supporting spheres.  The chrome orb is the main focal
-    // point; the warm diffuse hero has been moved deeper and reduced so it
-    // no longer dominates the right edge; the foreground glass sphere is smaller.
-    const vec hero_spheres[3] = {
-        vec(0.00f, 2.20f, -8.85f),     // central chrome orb, slightly raised/back
-        vec(6.40f, 1.05f, -14.60f),    // warm diffuse sphere kept in background
-        vec(-1.75f, 1.10f, -6.35f)     // smaller secondary glass sphere
+        h_light_centres.push_back(centre);
+        h_light_radii.push_back(radius);
+        h_light_emissions.push_back(emission);
     };
 
-    h_scene.push_back({ hero_spheres[0], 1.12f, MAT_METAL,
-                        vec(0.95f, 0.97f, 1.00f), 0.012f });
-    h_scene.push_back({ hero_spheres[1], 0.66f, MAT_LAMBERTIAN,
-                        vec(0.72f, 0.16f, 0.07f), 0.0f });
-    h_scene.push_back({ hero_spheres[2], 0.72f, MAT_DIELECTRIC,
-                        vec(1.0f, 1.0f, 1.0f), 1.50f });
+    // -----------------------------------------------------------------
+    // GLOBAL KEY LIGHT
+    // -----------------------------------------------------------------
+    add_light(
+        central_light_centre,
+        central_light_radius,
+        central_light_emission
+    );
 
-    // 9-10. Deliberate small props only; no RTIOW random sphere field.
-    h_scene.push_back({ vec(-7.65f, 0.74f, -5.00f), 0.42f, MAT_METAL,
-                        vec(0.55f, 0.23f, 0.09f), 0.24f });
-    h_scene.push_back({ vec(-5.40f, 0.62f, -12.50f), 0.32f, MAT_LAMBERTIAN,
-                        vec(0.12f, 0.35f, 0.42f), 0.0f });
-    h_scene.push_back({ vec(-2.00f, 0.56f, -13.50f), 0.30f, MAT_METAL,
-                        vec(0.38f, 0.48f, 0.62f), 0.30f });
-    h_scene.push_back({ vec( 5.80f, 0.66f, -4.50f), 0.38f, MAT_METAL,
-                        vec(0.62f, 0.64f, 0.69f), 0.16f });
-    h_scene.push_back({ vec( 7.30f, 0.78f, -9.80f), 0.34f, MAT_DIELECTRIC,
-                        vec(1.0f, 1.0f, 1.0f), 1.50f });
-    h_scene.push_back({ vec( 6.80f, 0.72f, -14.50f), 0.38f, MAT_LAMBERTIAN,
-                        vec(0.08f, 0.38f, 0.18f), 0.0f });
-    h_scene.push_back({ vec(-7.00f, 0.78f, -14.20f), 0.38f, MAT_METAL,
-                        vec(0.45f, 0.48f, 0.53f), 0.08f });
-    h_scene.push_back({ vec( 7.20f, 0.90f, -16.60f), 0.42f, MAT_METAL,
-                        vec(0.28f, 0.31f, 0.36f), 0.20f });
-    h_scene.push_back({ vec( 4.40f, 0.52f, -15.00f), 0.32f, MAT_LAMBERTIAN,
-                        vec(0.34f, 0.12f, 0.42f), 0.0f });
-    h_scene.push_back({ vec(-6.00f, 0.58f, -2.70f), 0.32f, MAT_LAMBERTIAN,
-                        vec(0.14f, 0.38f, 0.17f), 0.0f });
-    h_scene.push_back({ vec( 2.80f, 0.72f, -4.20f), 0.38f, MAT_DIELECTRIC,
-                        vec(1.0f, 1.0f, 1.0f), 1.50f });
-    h_scene.push_back({ vec(-1.60f, 0.62f, -12.00f), 0.32f, MAT_METAL,
-                        vec(0.72f, 0.55f, 0.26f), 0.12f });
+    // -----------------------------------------------------------------
+    // LOCAL STAIRCASE LIGHTS
+    // -----------------------------------------------------------------
+    // Five small warm spherical lights, one per stair tread.  They sit just
+    // inside the inner guard rail, high enough to illuminate the tread and
+    // rail surfaces without becoming giant visible emitters.
+    const float stair_step_y0[5] = {
+        0.22f, 0.55f, 0.88f, 1.21f, 1.54f
+    };
+
+    const float stair_step_z0[5] = {
+        -4.8f, -5.8f, -6.8f, -7.8f, -8.8f
+    };
+
+    const vec stair_light_emission(26.0f, 11.0f, 3.0f);
+    const float stair_light_radius = 0.10f;
+
+    for(int i = 0; i < 5; ++i){
+        vec centre(
+            -4.55f,
+            stair_step_y0[i] + 0.40f,
+            stair_step_z0[i] + 0.50f
+        );
+
+        add_light(
+            centre,
+            stair_light_radius,
+            stair_light_emission
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // LOCAL RIGHT-SIDE / TRIANGLE LIGHTS
+    // -----------------------------------------------------------------
+    // These cool spherical emitters are intentionally close to the metallic
+    // triangle assembly.  Their purpose is not to compete with the hero orb;
+    // they provide grazing highlights and local illumination for the triangle
+    // facets, the nearby machine, and the right-side matte props.
+    add_light(
+        vec(4.35f, 1.55f, -6.95f),
+        0.11f,
+        vec(2.0f, 12.0f, 22.0f)
+    );
+
+    add_light(
+        vec(8.35f, 2.25f, -7.40f),
+        0.11f,
+        vec(2.0f, 15.0f, 26.0f)
+    );
+
+    add_light(
+        vec(6.95f, 4.85f, -6.95f),
+        0.10f,
+        vec(3.0f, 17.0f, 29.0f)
+    );
+
+    add_light(
+        vec(8.00f, 4.10f, -6.55f),
+        0.10f,
+        vec(2.0f, 13.0f, 23.0f)
+    );
+
+    // Exactly ten sampled spherical lights:
+    //   1 central key + 5 stair lights + 4 right-side lights.
+    const int light_count = static_cast<int>(h_light_centres.size());
+
+    // -----------------------------------------------------------------
+    // DELIBERATE SPHERICAL PROPS
+    // -----------------------------------------------------------------
+    // The architecture remains the main subject.  Spheres are deliberate
+    // secondary material demonstrations rather than a random RTIOW field.
+    const vec hero_spheres[3] = {
+        vec(0.00f, 2.20f, -8.85f),     // central chrome orb
+        vec(6.40f, 1.05f, -14.60f),    // warm diffuse sphere, deeper/right
+        vec(-1.75f, 1.10f, -6.35f)     // smaller foreground glass sphere
+    };
+
+    // Central nearly-perfect chrome orb: the primary focal point.
+    h_scene.push_back({
+        hero_spheres[0],
+        1.12f,
+        MAT_METAL,
+        vec(0.95f, 0.97f, 1.00f),
+        0.012f
+    });
+
+    // Smaller warm Lambertian sphere retained in the background.
+    h_scene.push_back({
+        hero_spheres[1],
+        0.66f,
+        MAT_LAMBERTIAN,
+        vec(0.72f, 0.16f, 0.07f),
+        0.0f
+    });
+
+    // Smaller foreground dielectric sphere.
+    h_scene.push_back({
+        hero_spheres[2],
+        0.72f,
+        MAT_DIELECTRIC,
+        vec(1.0f, 1.0f, 1.0f),
+        1.50f
+    });
+
+    // Additional deliberate curved props.
+    h_scene.push_back({
+        vec(-7.65f, 0.74f, -5.00f),
+        0.42f,
+        MAT_METAL,
+        vec(0.55f, 0.23f, 0.09f),
+        0.24f
+    });
+
+    h_scene.push_back({
+        vec(-5.40f, 0.62f, -12.50f),
+        0.32f,
+        MAT_LAMBERTIAN,
+        vec(0.12f, 0.35f, 0.42f),
+        0.0f
+    });
+
+    h_scene.push_back({
+        vec(-2.00f, 0.56f, -13.50f),
+        0.30f,
+        MAT_METAL,
+        vec(0.38f, 0.48f, 0.62f),
+        0.30f
+    });
+
+    h_scene.push_back({
+        vec(5.80f, 0.66f, -4.50f),
+        0.38f,
+        MAT_METAL,
+        vec(0.62f, 0.64f, 0.69f),
+        0.16f
+    });
+
+    h_scene.push_back({
+        vec(7.30f, 0.78f, -9.80f),
+        0.34f,
+        MAT_DIELECTRIC,
+        vec(1.0f, 1.0f, 1.0f),
+        1.50f
+    });
+
+    h_scene.push_back({
+        vec(6.80f, 0.72f, -14.50f),
+        0.38f,
+        MAT_LAMBERTIAN,
+        vec(0.08f, 0.38f, 0.18f),
+        0.0f
+    });
+
+    h_scene.push_back({
+        vec(-7.00f, 0.78f, -14.20f),
+        0.38f,
+        MAT_METAL,
+        vec(0.45f, 0.48f, 0.53f),
+        0.08f
+    });
+
+    h_scene.push_back({
+        vec(7.20f, 0.90f, -16.60f),
+        0.42f,
+        MAT_METAL,
+        vec(0.28f, 0.31f, 0.36f),
+        0.20f
+    });
+
+    h_scene.push_back({
+        vec(4.40f, 0.52f, -15.00f),
+        0.32f,
+        MAT_LAMBERTIAN,
+        vec(0.34f, 0.12f, 0.42f),
+        0.0f
+    });
+
+    h_scene.push_back({
+        vec(-6.00f, 0.58f, -2.70f),
+        0.32f,
+        MAT_LAMBERTIAN,
+        vec(0.14f, 0.38f, 0.17f),
+        0.0f
+    });
+
+    h_scene.push_back({
+        vec(2.80f, 0.72f, -4.20f),
+        0.38f,
+        MAT_DIELECTRIC,
+        vec(1.0f, 1.0f, 1.0f),
+        1.50f
+    });
+
+    h_scene.push_back({
+        vec(-1.60f, 0.62f, -12.00f),
+        0.32f,
+        MAT_METAL,
+        vec(0.72f, 0.55f, 0.26f),
+        0.12f
+    });
 
     const int object_count = static_cast<int>(h_scene.size());
-    std::cout << "Scene sphere/light count: " << object_count << std::endl;
-    std::cout << "Architectural solids: " << NUM_EXTRA_SOLIDS
-              << " (" << NUM_EXTRA_CUBOIDS << " cuboids, "
-              << NUM_EXTRA_TRIANGLES << " triangles)" << std::endl;
 
     // -----------------------------------------------------------------
     // FINAL CAMERA COMPOSITION
     // -----------------------------------------------------------------
-    // 12-13. Square showcase, lower camera, ~15% farther back from the
-    // original position while retaining the same target and 48-degree FOV.
-    // The larger camera distance exposes more pillars/beams/stairs without
-    // resorting to an exaggerated wide-angle lens.
-    // Put the camera inside the open front of the atrium.  This is the key
-    // correction from the previous test: the camera must not sit so far
-    // outside the room that the floor/ceiling shell dominates the frame.
     vec lookfrom(4.80f, 3.20f, 0.90f);
     vec lookat(0.10f, 2.45f, -8.80f);
     vec vup(0.0f, 1.0f, 0.0f);
@@ -1082,139 +1479,306 @@ int main(){
     const float aperture = 0.08f;
     const float focus_dist = (lookfrom - hero_spheres[0]).length();
 
-    camera cam(lookfrom, lookat, vup, vfov, aspect_ratio, aperture, focus_dist);
+    camera cam(
+        lookfrom,
+        lookat,
+        vup,
+        vfov,
+        aspect_ratio,
+        aperture,
+        focus_dist
+    );
 
-    // -----------------------------------------------------------------
+    std::cout << "Scene sphere/light count: " << object_count << std::endl;
+    std::cout << "Sampled spherical lights: " << light_count << std::endl;
+    std::cout << "Architectural solids: " << NUM_EXTRA_SOLIDS
+              << " (" << NUM_EXTRA_CUBOIDS << " cuboids, "
+              << NUM_EXTRA_TRIANGLES << " triangles)" << std::endl;
+
     // -----------------------------------------------------------------
     // GPU MEMORY
     // -----------------------------------------------------------------
     sphereDesc* d_descs;
-    CUDA_CHECK(cudaMalloc((void**)&d_descs, object_count * sizeof(sphereDesc)));
-    CUDA_CHECK(cudaMemcpy(d_descs, h_scene.data(), object_count * sizeof(sphereDesc), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_descs,
+        object_count * sizeof(sphereDesc)
+    ));
+
+    CUDA_CHECK(cudaMemcpy(
+        d_descs,
+        h_scene.data(),
+        object_count * sizeof(sphereDesc),
+        cudaMemcpyHostToDevice
+    ));
 
     vec* h_fb = (vec*)malloc(fb_size);
     vec* d_fb;
     CUDA_CHECK(cudaMalloc((void**)&d_fb, fb_size));
 
     curandState* d_states;
-    CUDA_CHECK(cudaMalloc((void**)&d_states, total_pixels * sizeof(curandState)));
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_states,
+        total_pixels * sizeof(curandState)
+    ));
 
     hittable** d_list;
-    CUDA_CHECK(cudaMalloc((void**)&d_list, object_count * sizeof(hittable*)));
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_list,
+        object_count * sizeof(hittable*)
+    ));
 
     material** d_materials;
-    CUDA_CHECK(cudaMalloc((void**)&d_materials, object_count * sizeof(material*)));
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_materials,
+        object_count * sizeof(material*)
+    ));
 
     hittable** d_world;
     CUDA_CHECK(cudaMalloc((void**)&d_world, sizeof(hittable*)));
 
-    // The sphere/light BVH contains every entry from h_scene. One bvh_node
-    // exists even at a single-object leaf, hence the 2N-1 pool sizing.
     bvh_node* d_node_pool;
-    int node_pool_count = object_count > 1 ? 2 * object_count - 1 : 1;
-    CUDA_CHECK(cudaMalloc((void**)&d_node_pool, node_pool_count * sizeof(bvh_node)));
+    int node_pool_count =
+        object_count > 1 ? 2 * object_count - 1 : 1;
 
-    // Extra architecture layer.
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_node_pool,
+        node_pool_count * sizeof(bvh_node)
+    ));
+
+    // Multi-light arrays consumed by ray_color() and pdf.h.
+    vec* d_light_centres;
+    float* d_light_radii;
+    vec* d_light_emissions;
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_light_centres,
+        light_count * sizeof(vec)
+    ));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_light_radii,
+        light_count * sizeof(float)
+    ));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_light_emissions,
+        light_count * sizeof(vec)
+    ));
+
+    CUDA_CHECK(cudaMemcpy(
+        d_light_centres,
+        h_light_centres.data(),
+        light_count * sizeof(vec),
+        cudaMemcpyHostToDevice
+    ));
+
+    CUDA_CHECK(cudaMemcpy(
+        d_light_radii,
+        h_light_radii.data(),
+        light_count * sizeof(float),
+        cudaMemcpyHostToDevice
+    ));
+
+    CUDA_CHECK(cudaMemcpy(
+        d_light_emissions,
+        h_light_emissions.data(),
+        light_count * sizeof(vec),
+        cudaMemcpyHostToDevice
+    ));
+
+    // Extra architectural layer.
     hittable** d_extra_world;
     hittable** d_cuboid_boundaries;
     material** d_extra_materials;
     hittable** d_final_shapes;
     hittable** d_extra_top_list;
+
     CUDA_CHECK(cudaMalloc((void**)&d_extra_world, sizeof(hittable*)));
-    CUDA_CHECK(cudaMalloc((void**)&d_cuboid_boundaries, NUM_EXTRA_CUBOIDS * sizeof(hittable*)));
-    CUDA_CHECK(cudaMalloc((void**)&d_extra_materials, NUM_EXTRA_SOLIDS * sizeof(material*)));
-    CUDA_CHECK(cudaMalloc((void**)&d_final_shapes, NUM_EXTRA_SOLIDS * sizeof(hittable*)));
-    CUDA_CHECK(cudaMalloc((void**)&d_extra_top_list, (NUM_EXTRA_SOLIDS + 1) * sizeof(hittable*)));
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_cuboid_boundaries,
+        NUM_EXTRA_CUBOIDS * sizeof(hittable*)
+    ));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_extra_materials,
+        NUM_EXTRA_SOLIDS * sizeof(material*)
+    ));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_final_shapes,
+        NUM_EXTRA_SOLIDS * sizeof(hittable*)
+    ));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_extra_top_list,
+        (NUM_EXTRA_SOLIDS + 1) * sizeof(hittable*)
+    ));
 
     // Volumetric layer.
     hittable** d_fog_boundaries;
     material** d_fog_materials;
     hittable** d_fog_media;
     hittable** d_top_list;
-    CUDA_CHECK(cudaMalloc((void**)&d_fog_boundaries, NUM_FOG_VOLUMES * sizeof(hittable*)));
-    CUDA_CHECK(cudaMalloc((void**)&d_fog_materials, NUM_FOG_VOLUMES * sizeof(material*)));
-    CUDA_CHECK(cudaMalloc((void**)&d_fog_media, NUM_FOG_VOLUMES * sizeof(hittable*)));
-    CUDA_CHECK(cudaMalloc((void**)&d_top_list, (NUM_FOG_VOLUMES + 1) * sizeof(hittable*)));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_fog_boundaries,
+        NUM_FOG_VOLUMES * sizeof(hittable*)
+    ));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_fog_materials,
+        NUM_FOG_VOLUMES * sizeof(material*)
+    ));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_fog_media,
+        NUM_FOG_VOLUMES * sizeof(hittable*)
+    ));
+
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_top_list,
+        (NUM_FOG_VOLUMES + 1) * sizeof(hittable*)
+    ));
 
     hittable** d_final_world;
-    CUDA_CHECK(cudaMalloc((void**)&d_final_world, sizeof(hittable*)));
+    CUDA_CHECK(cudaMalloc(
+        (void**)&d_final_world,
+        sizeof(hittable*)
+    ));
 
     int tx = 8;
     int ty = 8;
     dim3 threads(tx, ty);
-    dim3 blocks((image_width + tx - 1) / tx, (image_height + ty - 1) / ty);
+    dim3 blocks(
+        (image_width + tx - 1) / tx,
+        (image_height + ty - 1) / ty
+    );
 
     // -----------------------------------------------------------------
     // BUILD SCENE
     // -----------------------------------------------------------------
-    create_world<<<1,1>>>(d_list, d_world, d_materials, d_descs, object_count, d_node_pool);
+    create_world<<<1,1>>>(
+        d_list,
+        d_world,
+        d_materials,
+        d_descs,
+        object_count,
+        d_node_pool
+    );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     create_extra_geometry<<<1,1>>>(
-        d_world, d_extra_world,
-        d_cuboid_boundaries, d_extra_materials,
-        d_final_shapes, d_extra_top_list);
+        d_world,
+        d_extra_world,
+        d_cuboid_boundaries,
+        d_extra_materials,
+        d_final_shapes,
+        d_extra_top_list
+    );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // hero0 = glass prism center, hero1 = chrome orb, hero2 = transparent crystal.
-    const vec hero0(-4.00f, 2.05f, -8.20f);
-    const vec hero1( 0.00f, 2.15f, -8.90f);
-    const vec hero2( 3.40f, 2.20f, -8.45f);
+    // Volumetrics are aligned with the actual final hero geometry.
+    const vec hero0(-4.00f, 2.18f, -8.20f);
+    const vec hero1( 0.00f, 2.20f, -8.85f);
+    const vec hero2( 3.40f, 2.00f, -8.31f);
 
     create_volumetrics<<<1,1>>>(
-        d_extra_world, d_final_world,
-        d_fog_boundaries, d_fog_materials, d_fog_media,
-        d_top_list, hero0, hero1, hero2);
+        d_extra_world,
+        d_final_world,
+        d_fog_boundaries,
+        d_fog_materials,
+        d_fog_media,
+        d_top_list,
+        hero0,
+        hero1,
+        hero2
+    );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // -----------------------------------------------------------------
     // RENDER
     // -----------------------------------------------------------------
-    init_random_states<<<blocks, threads>>>(d_states, image_width, image_height);
+    init_random_states<<<blocks, threads>>>(
+        d_states,
+        image_width,
+        image_height
+    );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
+    // Cheap validation render. Increase this only after composition is approved.
     const int samples_per_pixel = 64;
     const int samples_per_batch = 16;
-    const int num_batches = (samples_per_pixel + samples_per_batch - 1) / samples_per_batch;
+    const int num_batches =
+        (samples_per_pixel + samples_per_batch - 1) /
+        samples_per_batch;
 
     CUDA_CHECK(cudaMemset(d_fb, 0, fb_size));
 
     for(int batch = 0; batch < num_batches; ++batch){
         int this_batch = std::min(
             samples_per_batch,
-            samples_per_pixel - batch * samples_per_batch);
+            samples_per_pixel - batch * samples_per_batch
+        );
 
         render_kernel<<<blocks, threads>>>(
-            d_fb, image_width, image_height, cam,
-            d_final_world, d_states,
-            light_centre, light_radius, light_emission,
-            this_batch);
+            d_fb,
+            image_width,
+            image_height,
+            cam,
+            d_final_world,
+            d_states,
+            d_light_centres,
+            d_light_radii,
+            d_light_emissions,
+            light_count,
+            this_batch
+        );
 
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaDeviceSynchronize());
-        std::cout << "Completed batch " << (batch + 1) << "/" << num_batches << std::endl;
+
+        std::cout << "Completed batch "
+                  << (batch + 1)
+                  << "/"
+                  << num_batches
+                  << std::endl;
     }
 
-    CUDA_CHECK(cudaMemcpy(h_fb, d_fb, fb_size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(
+        h_fb,
+        d_fb,
+        fb_size,
+        cudaMemcpyDeviceToHost
+    ));
 
     // -----------------------------------------------------------------
     // OUTPUT
     // -----------------------------------------------------------------
     std::ofstream file("image.ppm");
-    file << "P3\n" << image_width << " " << image_height << "\n255\n";
+    file << "P3\n"
+         << image_width << " " << image_height << "\n"
+         << "255\n";
 
     for(int j = image_height - 1; j >= 0; --j){
         for(int i = 0; i < image_width; ++i){
             int pixel_index = j * image_width + i;
             vec pixel_color = h_fb[pixel_index];
 
-            float r_ = de_nan(pixel_color.x()) / float(samples_per_pixel);
-            float g_ = de_nan(pixel_color.y()) / float(samples_per_pixel);
-            float b_ = de_nan(pixel_color.z()) / float(samples_per_pixel);
+            float r_ =
+                de_nan(pixel_color.x()) /
+                float(samples_per_pixel);
+
+            float g_ =
+                de_nan(pixel_color.y()) /
+                float(samples_per_pixel);
+
+            float b_ =
+                de_nan(pixel_color.z()) /
+                float(samples_per_pixel);
 
             r_ = sqrtf(clamp01(r_));
             g_ = sqrtf(clamp01(g_));
@@ -1235,17 +1799,27 @@ int main(){
     // -----------------------------------------------------------------
     clear_volumetrics<<<1,1>>>(
         d_final_world,
-        d_fog_boundaries, d_fog_materials, d_fog_media);
+        d_fog_boundaries,
+        d_fog_materials,
+        d_fog_media
+    );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
     clear_extra_geometry<<<1,1>>>(
         d_extra_world,
-        d_cuboid_boundaries, d_extra_materials, d_final_shapes);
+        d_cuboid_boundaries,
+        d_extra_materials,
+        d_final_shapes
+    );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    clear_world<<<1,1>>>(d_list, d_materials, object_count);
+    clear_world<<<1,1>>>(
+        d_list,
+        d_materials,
+        object_count
+    );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -1256,6 +1830,10 @@ int main(){
     cudaFree(d_materials);
     cudaFree(d_descs);
     cudaFree(d_node_pool);
+
+    cudaFree(d_light_centres);
+    cudaFree(d_light_radii);
+    cudaFree(d_light_emissions);
 
     cudaFree(d_extra_world);
     cudaFree(d_cuboid_boundaries);
