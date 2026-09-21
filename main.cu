@@ -242,7 +242,7 @@ __device__ vec ray_color(const ray& r , hittable** world , curandState* local_st
 
                 curr_attenuated *= brdf * (cosine / pdf_val);
                 curr_ray = ray(rec.p, scatter_dir);
-                add_emission = true;
+                add_emission = rec.mat->is_delta();
             } else {
                 vec light_point = sample_light_point(light_centre , light_radius , local_state);
 
@@ -275,7 +275,7 @@ __device__ vec ray_color(const ray& r , hittable** world , curandState* local_st
                 if(rec.mat->scatter(curr_ray, rec , attenuation , scattered , local_state)){
                     curr_attenuated *= attenuation;
                     curr_ray = scattered;
-                    add_emission = rec.mat->is_delta();
+                    add_emission = false;
                 }else{
                     return accumulated_light;
                 }
@@ -364,14 +364,14 @@ __global__ void create_world(hittable** list , hittable** world , material** mat
             case MAT_LAMBERTIAN :
                 m = new lambertian(desc[i].albedo);
                 break;
-            
+
             case MAT_METAL:
                 m = new metal(desc[i].albedo, desc[i].param);
                 break;
 
             case MAT_DIELECTRIC:
                 m = new dielectric(desc[i].param);
-                break;  
+                break;
             case MAT_LIGHT:
                 m = new emit_light(desc[i].albedo);
                 break;
