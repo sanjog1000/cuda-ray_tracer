@@ -970,7 +970,7 @@ __global__ void create_extra_geometry(
     // uses the central spherical key light passed to ray_color().
     extra_materials[m] = new emit_light(vec(8.0f, 9.0f, 11.0f));
     cuboid_boundaries[c] = new cuboid(
-        vec(-3.2f, 7.30f, -9.8f), vec(3.2f, 7.48f, -6.3f), extra_materials[m]);
+        vec(-2.85f, 7.30f, -9.60f), vec(2.85f, 7.48f, -6.50f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 7.39f, -8.05f), 0.0f);
     ++m; ++c;
 
@@ -1004,12 +1004,12 @@ __global__ void create_extra_geometry(
     // Eight dielectric triangles form the main glass prism.  It is slightly
     // taller and more isolated than the earlier layout so the arbitrary
     // triangle geometry is readable as a deliberate object.
-    const vec A(-5.00f, 0.80f, -9.05f);
-    const vec B(-3.00f, 0.80f, -9.05f);
-    const vec C(-4.00f, 3.55f, -9.05f);
-    const vec D(-5.00f, 0.80f, -7.35f);
-    const vec E(-3.00f, 0.80f, -7.35f);
-    const vec F(-4.00f, 3.55f, -7.35f);
+    const vec A(-5.00f, 0.68f, -9.05f);
+    const vec B(-3.00f, 0.68f, -9.05f);
+    const vec C(-4.00f, 3.43f, -9.05f);
+    const vec D(-5.00f, 0.68f, -7.35f);
+    const vec E(-3.00f, 0.68f, -7.35f);
+    const vec F(-4.00f, 3.43f, -7.35f);
 
     extra_materials[m] = new dielectric(1.50f);
     final_shapes[m] = new triangle(A, B, C, extra_materials[m]); ++m;
@@ -1031,10 +1031,10 @@ __global__ void create_extra_geometry(
     // Four dielectric triangles form a larger tetrahedral crystal.  A small
     // separation between the silhouette features and the stronger colored
     // metal sculpture behind it keeps the four facets visually distinct.
-    const vec T(3.40f, 4.05f, -8.70f);
-    const vec L(2.15f, 1.45f, -7.30f);
-    const vec R(4.65f, 1.45f, -7.30f);
-    const vec Q(3.40f, 1.05f, -9.95f);
+    const vec T(3.40f, 3.68f, -8.70f);
+    const vec L(2.15f, 1.08f, -7.30f);
+    const vec R(4.65f, 1.08f, -7.30f);
+    const vec Q(3.40f, 0.68f, -9.95f);
 
     extra_materials[m] = new dielectric(1.47f);
     final_shapes[m] = new triangle(T, L, R, extra_materials[m]); ++m;
@@ -1051,37 +1051,41 @@ __global__ void create_extra_geometry(
     const vec M0(5.55f, 2.35f, -7.85f);
     const vec M1(6.85f, 2.35f, -7.85f);
     const vec M2(6.20f, 4.45f, -7.85f);
-    const vec N0(6.75f, 3.00f, -7.50f);
-    const vec N1(7.95f, 3.00f, -7.50f);
-    const vec N2(7.35f, 5.10f, -7.50f);
-    const vec P0(5.25f, 3.85f, -7.15f);
-    const vec P1(6.40f, 3.85f, -7.15f);
-    const vec P2(5.82f, 5.65f, -7.15f);
+    // M is already seated on the right platform.  N and P were previously
+    // suspended above it; their base edges are now explicitly seated at y=2.35.
+    const vec N0(6.75f, 2.35f, -7.50f);
+    const vec N1(7.95f, 2.35f, -7.50f);
+    const vec N2(7.35f, 4.45f, -7.50f);
+    const vec P0(5.25f, 2.35f, -7.15f);
+    const vec P1(6.40f, 2.35f, -7.15f);
+    const vec P2(5.82f, 4.15f, -7.15f);
 
-    const vec tri_metal(0.86f, 0.90f, 0.97f);
+    // ~15% lower albedo keeps the triangle geometry readable without the
+    // nearly-white clipped look of the previous render.
+    const vec tri_metal(0.73f, 0.765f, 0.825f);
     extra_materials[m] = new metal(tri_metal, 0.075f);
     final_shapes[m] = new triangle(M0, M1, M2, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(vec(0.82f, 0.87f, 0.95f), 0.09f);
+    extra_materials[m] = new metal(vec(0.70f, 0.74f, 0.81f), 0.09f);
     final_shapes[m] = new triangle(N0, N1, N2, extra_materials[m]); ++m;
-    extra_materials[m] = new metal(vec(0.88f, 0.92f, 0.99f), 0.07f);
+    extra_materials[m] = new metal(vec(0.75f, 0.78f, 0.84f), 0.07f);
     final_shapes[m] = new triangle(P0, P1, P2, extra_materials[m]); ++m;
 
     const vec M3(5.55f, 2.35f, -7.62f);
     const vec M4(6.85f, 2.35f, -7.62f);
     const vec M5(6.20f, 4.45f, -7.62f);
-    extra_materials[m] = new metal(vec(0.62f, 0.68f, 0.77f), 0.11f);
+    extra_materials[m] = new metal(vec(0.53f, 0.58f, 0.65f), 0.11f);
     final_shapes[m] = new triangle(M5, M4, M3, extra_materials[m]); ++m;
 
-    const vec N3(6.75f, 3.00f, -7.28f);
-    const vec N4(7.95f, 3.00f, -7.28f);
-    const vec N5(7.35f, 5.10f, -7.28f);
-    extra_materials[m] = new metal(vec(0.74f, 0.79f, 0.88f), 0.10f);
+    const vec N3(6.75f, 2.35f, -7.28f);
+    const vec N4(7.95f, 2.35f, -7.28f);
+    const vec N5(7.35f, 4.45f, -7.28f);
+    extra_materials[m] = new metal(vec(0.63f, 0.67f, 0.75f), 0.10f);
     final_shapes[m] = new triangle(N5, N4, N3, extra_materials[m]); ++m;
 
-    const vec P3(5.25f, 3.85f, -6.92f);
-    const vec P4(6.40f, 3.85f, -6.92f);
-    const vec P5(5.82f, 5.65f, -6.92f);
-    extra_materials[m] = new metal(vec(0.68f, 0.73f, 0.82f), 0.12f);
+    const vec P3(5.25f, 2.35f, -6.92f);
+    const vec P4(6.40f, 2.35f, -6.92f);
+    const vec P5(5.82f, 4.15f, -6.92f);
+    extra_materials[m] = new metal(vec(0.58f, 0.62f, 0.70f), 0.12f);
     final_shapes[m] = new triangle(P5, P4, P3, extra_materials[m]); ++m;
 
     // The constants above match the number of actual shapes constructed in
@@ -1211,14 +1215,14 @@ int main(){
     // -----------------------------------------------------------------
     // FINAL DETERMINISTIC SHOWCASE SCENE
     // -----------------------------------------------------------------
-    // The scene remains square and architectural.  The lighting is now
+    // The scene remains wide (20:9) and architectural.  The lighting is now
     // distributed across one central key plus small local spherical lights,
     // while small Lambertian props are deliberately placed where those local
     // lights can reveal the staircase, guard rails, right-side machinery and
     // triangle sculpture.
     srand(42);
 
-    const float aspect_ratio = 20.0f / 9.0f ;
+    const float aspect_ratio = 20.0f / 9.0f;
     const int image_width = 1024;
     const int image_height = static_cast<int>(image_width / aspect_ratio) ;
 
@@ -1317,13 +1321,13 @@ int main(){
     );
 
     add_light(
-        vec(6.95f, 4.72f, -8.34f),
+        vec(6.95f, 4.72f, -8.38f),
         0.10f,
         vec(3.0f, 17.0f, 29.0f)
     );
 
     add_light(
-        vec(7.95f, 4.05f, -8.34f),
+        vec(7.95f, 4.05f, -8.38f),
         0.10f,
         vec(2.0f, 13.0f, 23.0f)
     );
@@ -1338,9 +1342,9 @@ int main(){
     // The architecture remains the main subject.  Spheres are deliberate
     // secondary material demonstrations rather than a random RTIOW field.
     const vec hero_spheres[3] = {
-        vec(0.00f, 2.20f, -8.85f),     // central chrome orb
-        vec(6.40f, 1.05f, -14.60f),    // warm diffuse sphere, deeper/right
-        vec(-1.75f, 1.10f, -6.35f)     // smaller foreground glass sphere
+        vec(0.00f, 1.80f, -8.85f),     // chrome orb seated on central platform (top y=0.68)
+        vec(6.40f, 0.88f, -14.60f),    // warm diffuse sphere seated on floor
+        vec(-1.75f, 0.94f, -6.35f)     // foreground glass sphere seated on floor
     };
 
     // Central nearly-perfect chrome orb: the primary focal point.
@@ -1372,7 +1376,7 @@ int main(){
 
     // Additional deliberate curved props.
     h_scene.push_back({
-        vec(-7.65f, 0.74f, -5.00f),
+        vec(-7.65f, 0.94f, -5.00f),
         0.42f,
         MAT_METAL,
         vec(0.55f, 0.23f, 0.09f),
@@ -1380,7 +1384,7 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(-5.40f, 0.62f, -12.50f),
+        vec(-5.40f, 0.54f, -12.50f),
         0.32f,
         MAT_LAMBERTIAN,
         vec(0.12f, 0.35f, 0.42f),
@@ -1388,7 +1392,7 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(-2.00f, 0.56f, -13.50f),
+        vec(-2.00f, 0.52f, -13.50f),
         0.30f,
         MAT_METAL,
         vec(0.38f, 0.48f, 0.62f),
@@ -1396,7 +1400,7 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(5.80f, 0.66f, -4.50f),
+        vec(5.80f, 0.60f, -4.50f),
         0.38f,
         MAT_METAL,
         vec(0.62f, 0.64f, 0.69f),
@@ -1404,7 +1408,7 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(7.30f, 0.78f, -9.80f),
+        vec(7.30f, 0.56f, -9.80f),
         0.34f,
         MAT_DIELECTRIC,
         vec(1.0f, 1.0f, 1.0f),
@@ -1412,15 +1416,15 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(6.80f, 0.72f, -14.50f),
+        vec(6.80f, 0.60f, -14.50f),
         0.38f,
         MAT_LAMBERTIAN,
-        vec(0.08f, 0.38f, 0.18f),
+        vec(0.06f, 0.42f, 0.56f),
         0.0f
     });
 
     h_scene.push_back({
-        vec(-7.00f, 0.78f, -14.20f),
+        vec(-7.00f, 0.60f, -14.20f),
         0.38f,
         MAT_METAL,
         vec(0.45f, 0.48f, 0.53f),
@@ -1428,7 +1432,7 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(7.20f, 0.90f, -16.60f),
+        vec(7.20f, 0.64f, -16.60f),
         0.42f,
         MAT_METAL,
         vec(0.28f, 0.31f, 0.36f),
@@ -1436,7 +1440,7 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(4.40f, 0.52f, -15.00f),
+        vec(4.40f, 0.54f, -15.00f),
         0.32f,
         MAT_LAMBERTIAN,
         vec(0.34f, 0.12f, 0.42f),
@@ -1444,15 +1448,15 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(-6.00f, 0.58f, -2.70f),
+        vec(-6.00f, 0.54f, -2.70f),
         0.32f,
         MAT_LAMBERTIAN,
-        vec(0.14f, 0.38f, 0.17f),
+        vec(0.60f, 0.09f, 0.06f),
         0.0f
     });
 
     h_scene.push_back({
-        vec(2.80f, 0.72f, -4.20f),
+        vec(2.80f, 0.60f, -4.20f),
         0.38f,
         MAT_DIELECTRIC,
         vec(1.0f, 1.0f, 1.0f),
@@ -1460,7 +1464,7 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(-1.60f, 0.62f, -12.00f),
+        vec(-1.60f, 0.54f, -12.00f),
         0.32f,
         MAT_METAL,
         vec(0.72f, 0.55f, 0.26f),
@@ -1680,9 +1684,9 @@ int main(){
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Volumetrics are aligned with the actual final hero geometry.
-    const vec hero0(-4.00f, 2.18f, -8.20f);
-    const vec hero1( 0.00f, 2.20f, -8.85f);
-    const vec hero2( 3.40f, 2.00f, -8.31f);
+    const vec hero0(-4.00f, 2.06f, -8.20f);
+    const vec hero1( 0.00f, 1.80f, -8.85f);
+    const vec hero2( 3.40f, 1.63f, -8.31f);
 
     create_volumetrics<<<1,1>>>(
         d_extra_world,
