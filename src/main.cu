@@ -1816,7 +1816,7 @@ int main(){
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Cheap validation render. Increase this only after composition is approved.
-    const int samples_per_pixel = 4096;
+    const int samples_per_pixel = 1024;
     const int samples_per_batch = 32;
     const int num_batches =
         (samples_per_pixel + samples_per_batch - 1) /
