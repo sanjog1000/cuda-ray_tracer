@@ -130,17 +130,15 @@ public:
 
     __host__ __device__ virtual bool hit(const ray& r, float t_min, float t_max, hit_record& rec, curandState* local_state) const override {
         vec d = r.origin() - pivot;
-        // FIX: world -> local must use the inverse Z rotation R(-theta).
         vec local_o(
-            cos_theta*d.x() + sin_theta*d.y(),
-            -sin_theta*d.x() + cos_theta*d.y(),
+            cos_theta*d.x() - sin_theta*d.y(),
+            sin_theta*d.x() + cos_theta*d.y(),
             d.z()
         );
         vec dir = r.direction();
-        // FIX: same inverse rotation for the ray direction.
         vec local_d(
-            cos_theta*dir.x() + sin_theta*dir.y(),
-            -sin_theta*dir.x() + cos_theta*dir.y(),
+            cos_theta*dir.x() - sin_theta*dir.y(),
+            sin_theta*dir.x() + cos_theta*dir.y(),
             dir.z()
         );
 
@@ -149,15 +147,14 @@ public:
 
         vec p = rec.p - pivot;
         vec n = rec.normal;
-        // FIX: local -> world applies the requested +theta rotation.
         vec world_p(
-            cos_theta*p.x() - sin_theta*p.y(),
-            sin_theta*p.x() + cos_theta*p.y(),
+            cos_theta*p.x() + sin_theta*p.y(),
+            -sin_theta*p.x() + cos_theta*p.y(),
             p.z()
         );
         vec world_n(
-            cos_theta*n.x() - sin_theta*n.y(),
-            sin_theta*n.x() + cos_theta*n.y(),
+            cos_theta*n.x() + sin_theta*n.y(),
+            -sin_theta*n.x() + cos_theta*n.y(),
             n.z()
         );
 
@@ -1259,38 +1256,38 @@ __global__ void create_volumetrics(
     fog_boundaries[idx] = new cuboid(
         vec(-9.2f, 0.05f, -18.5f), vec(9.2f, 0.70f, -2.0f), nullptr);
     fog_materials[idx] = new isotropic(vec(0.88f, 0.90f, 0.94f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0025f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.008f, fog_materials[idx]);
     ++idx;
 
     // 2. Mist around the glass prism.
     fog_boundaries[idx] = new sphere(hero0, 2.20f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.95f, 0.84f, 0.78f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0005f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.001f, fog_materials[idx]);
     ++idx;
 
     // 3. Mist around the central chrome hero.
     fog_boundaries[idx] = new sphere(hero1, 2.0f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.90f, 0.92f, 0.96f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0005f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.001f, fog_materials[idx]);
     ++idx;
 
     // 4. Mist around the transparent crystal.
     fog_boundaries[idx] = new sphere(hero2, 2.35f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.78f, 0.89f, 1.00f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0005f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.001f, fog_materials[idx]);
     ++idx;
 
     // 5. Haze against the back wall for visible depth / light shafts.
     fog_boundaries[idx] = new cuboid(
         vec(-8.6f, 1.0f, -18.8f), vec(8.6f, 6.8f, -17.0f), nullptr);
     fog_materials[idx] = new isotropic(vec(0.84f, 0.88f, 0.94f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0020f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.006f, fog_materials[idx]);
     ++idx;
 
     // 6. Soft haze around the main overhead light.
     fog_boundaries[idx] = new sphere(vec(0.0f, 6.65f, -9.15f), 1.70f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.86f, 0.90f, 0.96f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0020f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.006f, fog_materials[idx]);
     ++idx;
 
     top_list[0] = *in_world;
@@ -1416,16 +1413,13 @@ int main(){
     // they provide grazing highlights and local illumination for the triangle
     // facets, the nearby machine, and the right-side matte props.
     add_light(
-        // Keep the emitter just in front of the left prism instead of
-        // embedding it inside the opaque solid.
-        vec(5.05f, 2.70f, -7.05f),
+        vec(5.40f, 2.46f, -7.45f),
         0.11f,
         vec(2.0f, 12.0f, 22.0f)
     );
 
     add_light(
-        // Same idea for the right prism: sample from camera-facing space.
-        vec(8.95f, 2.70f, -7.05f),
+        vec(8.35f, 2.46f, -7.40f),
         0.11f,
         vec(2.0f, 15.0f, 26.0f)
     );
@@ -1824,8 +1818,8 @@ int main(){
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Showcase render: the scene contains glossy paths and several participating media volumes, so 64 spp is visibly under-sampled.
-    const int samples_per_pixel = 256;
+    // Cheap validation render. Increase this only after composition is approved.
+    const int samples_per_pixel = 64;
     const int samples_per_batch = 8;
     const int num_batches =
         (samples_per_pixel + samples_per_batch - 1) /
