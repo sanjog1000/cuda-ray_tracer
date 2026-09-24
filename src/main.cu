@@ -923,25 +923,21 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-2.75f, 0.96f, -8.05f), 28.0f);
     ++m; ++c;
 
-    // 34-35. Tilted plates. rotate_z's sign convention here is chosen so
-    // the outer edge rises rather than sinks into the floor.
-    // 34 - Left diagonal brace — REPLACE the rotate_z version with this
-extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
-cuboid_boundaries[c] = new cuboid(
-    vec(-6.575f, 0.70f, -9.59f),
-    vec(-3.725f, 0.94f, -9.41f),
-    extra_materials[m]);
-final_shapes[m] = new rotate_y(
-    cuboid_boundaries[c],
-    vec(-5.15f, 0.82f, -9.50f),
-    50.70f);
-++m; ++c;
-
-// Right diagonal brace
+    // 34-35. Low foreground plates.
+    // The left plate is kept unchanged. The right plate is deliberately made
+    // into a thin, flat diagonal beam so it meets the foreground platform
+    // cleanly instead of producing the previous overlapping/floating faces.
     extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
     cuboid_boundaries[c] = new cuboid(
-        vec(3.6f, 0.68f, -9.5f), vec(6.5f, 0.96f, -8.9f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(5.05f, 0.82f, -9.2f), -38.0f);
+        vec(-6.2f, 0.72f, -9.2f), vec(-3.9f, 1.05f, -7.6f), extra_materials[m]);
+    final_shapes[m] = new rotate_z(cuboid_boundaries[c], vec(-6.2f, 0.72f, -9.2f), -18.0f);
+    ++m; ++c;
+
+    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.22f);
+    cuboid_boundaries[c] = new cuboid(
+        vec(4.35f, 0.72f, -8.15f), vec(7.10f, 0.96f, -7.78f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(
+        cuboid_boundaries[c], vec(5.725f, 0.84f, -7.965f), 12.0f);
     ++m; ++c;
 
     // 36-42. A compact industrial machine housing on the right side.
@@ -1331,8 +1327,8 @@ int main(){
     srand(42);
 
     const float aspect_ratio = 22.0f / 9.0f;
-    const int image_width = 1200;
-    const int image_height = static_cast<int>(image_width / aspect_ratio) ;
+    const int image_width = 1500;
+     const int image_height = static_cast<int>(image_width / aspect_ratio) ;
 
     const int total_pixels = image_height * image_width;
     const size_t fb_size = total_pixels * sizeof(vec);
@@ -1417,10 +1413,10 @@ int main(){
     // they provide grazing highlights and local illumination for the triangle
     // facets, the nearby machine, and the right-side matte props.
     add_light(
-    vec(5.85f, 2.46f, -7.20f),
-    0.11f,
-    vec(2.0f, 12.0f, 22.0f)
-);
+        vec(5.40f, 2.46f, -7.45f),
+        0.11f,
+        vec(2.0f, 12.0f, 22.0f)
+    );
 
     add_light(
         vec(8.35f, 2.46f, -7.40f),
