@@ -925,16 +925,18 @@ __global__ void create_extra_geometry(
 
     // 34-35. Tilted plates. rotate_z's sign convention here is chosen so
     // the outer edge rises rather than sinks into the floor.
+    // Left diagonal brace
     extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
     cuboid_boundaries[c] = new cuboid(
-        vec(-6.2f, 0.72f, -9.2f), vec(-3.9f, 1.05f, -7.6f), extra_materials[m]);
-    final_shapes[m] = new rotate_z(cuboid_boundaries[c], vec(-6.2f, 0.72f, -9.2f), -18.0f);
+        vec(-6.5f, 0.68f, -9.5f), vec(-3.6f, 0.96f, -8.9f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-5.05f, 0.82f, -9.2f), 38.0f);
     ++m; ++c;
 
+// Right diagonal brace
     extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
     cuboid_boundaries[c] = new cuboid(
-        vec(4.0f, 1.42f, -9.2f), vec(6.3f, 1.75f, -7.6f), extra_materials[m]);
-    final_shapes[m] = new rotate_z(cuboid_boundaries[c], vec(4.0f, 1.42f, -9.2f), 18.0f);
+        vec(3.6f, 0.68f, -9.5f), vec(6.5f, 0.96f, -8.9f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(5.05f, 0.82f, -9.2f), -38.0f);
     ++m; ++c;
 
     // 36-42. A compact industrial machine housing on the right side.
