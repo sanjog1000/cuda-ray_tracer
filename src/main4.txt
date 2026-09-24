@@ -1237,7 +1237,7 @@ int main(){
 
     const float aspect_ratio = 22.0f / 9.0f;
     const int image_width = 1920;
-    const int image_height = 864 ;
+    const int image_height = static_cast<int>(image_width / aspect_ratio) ;
 
     const int total_pixels = image_height * image_width;
     const size_t fb_size = total_pixels * sizeof(vec);
