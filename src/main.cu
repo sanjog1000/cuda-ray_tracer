@@ -1334,7 +1334,7 @@ int main(){
     srand(42);
 
     const float aspect_ratio = 22.0f / 9.0f;
-    const int image_width = 3000;
+    const int image_width = 1200;
     const int image_height = static_cast<int>(image_width / aspect_ratio) ;
 
     const int total_pixels = image_height * image_width;
@@ -1826,8 +1826,8 @@ int main(){
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Cheap validation render. Increase this only after composition is approved.
-    const int samples_per_pixel = 1024;
-    const int samples_per_batch = 32;
+    const int samples_per_pixel = 16;
+    const int samples_per_batch = 8;
     const int num_batches =
         (samples_per_pixel + samples_per_batch - 1) /
         samples_per_batch;
