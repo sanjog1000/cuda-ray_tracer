@@ -925,12 +925,17 @@ __global__ void create_extra_geometry(
 
     // 34-35. Tilted plates. rotate_z's sign convention here is chosen so
     // the outer edge rises rather than sinks into the floor.
-    // Left diagonal brace
-    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
-    cuboid_boundaries[c] = new cuboid(
-        vec(-6.5f, 0.68f, -9.5f), vec(-3.6f, 0.96f, -8.9f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-5.05f, 0.82f, -9.2f), 38.0f);
-    ++m; ++c;
+    // 34 - Left diagonal brace — REPLACE the rotate_z version with this
+extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
+cuboid_boundaries[c] = new cuboid(
+    vec(-6.575f, 0.70f, -9.59f),
+    vec(-3.725f, 0.94f, -9.41f),
+    extra_materials[m]);
+final_shapes[m] = new rotate_y(
+    cuboid_boundaries[c],
+    vec(-5.15f, 0.82f, -9.50f),
+    50.70f);
+++m; ++c;
 
 // Right diagonal brace
     extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
