@@ -923,28 +923,18 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-2.75f, 0.96f, -8.05f), 28.0f);
     ++m; ++c;
 
-    // 34-35. Foreground diagonal plates.  The left plate is unchanged.
+    // 34-35. Tilted plates. rotate_z's sign convention here is chosen so
+    // the outer edge rises rather than sinks into the floor.
     extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
     cuboid_boundaries[c] = new cuboid(
         vec(-6.2f, 0.72f, -9.2f), vec(-3.9f, 1.05f, -7.6f), extra_materials[m]);
     final_shapes[m] = new rotate_z(cuboid_boundaries[c], vec(-6.2f, 0.72f, -9.2f), -18.0f);
     ++m; ++c;
 
-    // Right plate: lie above the central platform and run diagonally in X-Z.
-    // The previous +18 deg Z-rotation dropped its outer lower edge to about
-    // y=0.01, intersecting both the platform/floor and producing the broken
-    // appearance in the final camera view.  This X-Z beam keeps y fixed so
-    // the whole solid clears the platform while preserving the intended
-    // diagonal silhouette.
     extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
     cuboid_boundaries[c] = new cuboid(
-        vec(3.725f, 0.70f, -7.59f),
-        vec(6.575f, 0.94f, -7.41f),
-        extra_materials[m]);
-    final_shapes[m] = new rotate_y(
-        cuboid_boundaries[c],
-        vec(5.15f, 0.82f, -7.50f),
-        -50.70f);
+        vec(4.0f, 1.42f, -9.2f), vec(6.3f, 1.75f, -7.6f), extra_materials[m]);
+    final_shapes[m] = new rotate_z(cuboid_boundaries[c], vec(4.0f, 1.42f, -9.2f), 18.0f);
     ++m; ++c;
 
     // 36-42. A compact industrial machine housing on the right side.
@@ -1420,10 +1410,10 @@ int main(){
     // they provide grazing highlights and local illumination for the triangle
     // facets, the nearby machine, and the right-side matte props.
     add_light(
-        vec(5.40f, 2.46f, -7.45f),
-        0.11f,
-        vec(2.0f, 12.0f, 22.0f)
-    );
+    vec(5.85f, 2.46f, -7.20f),
+    0.11f,
+    vec(2.0f, 12.0f, 22.0f)
+);
 
     add_light(
         vec(8.35f, 2.46f, -7.40f),
@@ -1826,7 +1816,7 @@ int main(){
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Cheap validation render. Increase this only after composition is approved.
-    const int samples_per_pixel = 16;
+    const int samples_per_pixel = 64;
     const int samples_per_batch = 8;
     const int num_batches =
         (samples_per_pixel + samples_per_batch - 1) /
