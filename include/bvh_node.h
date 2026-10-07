@@ -4,6 +4,7 @@
 #include "hittable.h"
 #include "aabb.h"
 #include <curand_kernel.h>
+#include <new>
 
 // randomly choose one of the three spatial axes
 // 0 -> X, 1 -> Y, 2 -> Z

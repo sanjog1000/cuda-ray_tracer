@@ -17,6 +17,8 @@
 #include "triangle.h"
 #include "constant_medium.h"
 
+__constant__ scene_light g_scene_lights[MAX_SCENE_LIGHTS];
+
 #define CUDA_CHECK(call)                                                        \
     do {                                                                        \
         cudaError_t err__ = (call);                                             \
@@ -311,9 +313,6 @@ __device__ vec ray_color(
     const ray& r,
     hittable** world,
     curandState* local_state,
-    const vec* light_centres,
-    const float* light_radii,
-    const vec* light_emissions,
     int light_count
 ){
     vec curr_attenuated(1.0f, 1.0f, 1.0f);
@@ -347,12 +346,7 @@ __device__ vec ray_color(
             if(rec.mat->uses_pdf_sampling()){
                 cosine_pdf cos_pdf(rec.normal);
 
-                multi_sphere_pdf lgt_pdf(
-                    rec.p,
-                    light_centres,
-                    light_radii,
-                    light_count
-                );
+                multi_sphere_pdf lgt_pdf(rec.p, light_count);
 
                 multi_mixture_pdf mix_pdf(cos_pdf, lgt_pdf);
 
@@ -396,13 +390,11 @@ __device__ vec ray_color(
                         light_index = light_count - 1;
                     }
 
-                    const vec light_centre = light_centres[light_index];
-                    const float light_radius = light_radii[light_index];
-                    const vec light_emission = light_emissions[light_index];
+                    const scene_light light = g_scene_lights[light_index];
 
                     vec light_point = sample_light_point(
-                        light_centre,
-                        light_radius,
+                        light.centre,
+                        light.radius,
                         local_state
                     );
 
@@ -418,7 +410,7 @@ __device__ vec ray_color(
 
                         if(NdotL > 0.0f){
                             vec light_normal = unit_vector(
-                                light_point - light_centre
+                                light_point - light.centre
                             );
 
                             float light_costheta = fmaxf(
@@ -445,15 +437,11 @@ __device__ vec ray_color(
                                     // Point was sampled uniformly by area from
                                     // the selected light, and the selected light
                                     // itself was chosen uniformly from N lights.
-                                    float light_area =
-                                        4.0f * 3.14159265359f *
-                                        light_radius * light_radius;
-
-                                    float joint_area_pdf =
-                                        1.0f / (float(light_count) * light_area);
+                                    const float joint_area_pdf =
+                                        1.0f / (float(light_count) * light.area);
 
                                     vec direct_light =
-                                        brdf * light_emission *
+                                        brdf * light.emission *
                                         ((NdotL * light_costheta) /
                                          (distance * distance * joint_area_pdf));
 
@@ -481,7 +469,11 @@ __device__ vec ray_color(
                 )){
                     curr_attenuated *= attenuation;
                     curr_ray = scattered;
-                    add_emission = false;
+                    // Delta materials (glass) need to be allowed to see
+                    // emissive surfaces on the next bounce. Non-delta materials
+                    // already receive direct lighting via NEE, so suppress their
+                    // next-hit emission to avoid double counting.
+                    add_emission = rec.mat->is_delta();
                 }
                 else{
                     return accumulated_light;
@@ -546,9 +538,6 @@ __global__ void render_kernel(
     camera cam,
     hittable** world,
     curandState* states,
-    const vec* light_centres,
-    const float* light_radii,
-    const vec* light_emissions,
     int light_count,
     int samples_this_batch
 ){
@@ -579,9 +568,6 @@ __global__ void render_kernel(
             r,
             world,
             &local_state,
-            light_centres,
-            light_radii,
-            light_emissions,
             light_count
         );
     }
@@ -659,7 +645,7 @@ __global__ void clear_world(hittable** list, material** materials, int count) {
 // controlled depth-of-field demonstrate the renderer's full feature set.
 // There is no random RTIOW sphere field; spheres are deliberate secondary props.
 // ---------------------------------------------------------------------
-#define NUM_EXTRA_CUBOIDS 66
+#define NUM_EXTRA_CUBOIDS 50
 #define NUM_EXTRA_TRIANGLE_FACES 12
 #define NUM_EXTRA_TRIANGULAR_PRISMS 3
 #define NUM_EXTRA_SOLIDS (NUM_EXTRA_CUBOIDS + NUM_EXTRA_TRIANGLE_FACES + NUM_EXTRA_TRIANGULAR_PRISMS)
@@ -670,7 +656,8 @@ __global__ void create_extra_geometry(
     hittable** cuboid_boundaries,
     material** extra_materials,
     hittable** final_shapes,
-    hittable** extra_top_list
+    hittable** extra_top_list,
+    bvh_node* extra_bvh_pool
 ){
     if(threadIdx.x != 0 || blockIdx.x != 0) return;
 
@@ -951,7 +938,7 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(
         cuboid_boundaries[c],
         vec(5.15f, 0.82f, -9.15f),
-        -55.0f);
+        -18.0f);
     ++m; ++c;
 
     // 36-42. A compact industrial machine housing on the right side.
@@ -1165,12 +1152,12 @@ __global__ void create_extra_geometry(
     // slightly staggered in Z so their silhouettes remain distinct.
 
     // LEFT prism ------------------------------------------------------
-    const vec P0(5.35f, 2.35f, -7.35f);
-    const vec P1(6.35f, 2.35f, -7.35f);
-    const vec P2(5.85f, 4.05f, -7.35f);
-    const vec P3(5.35f, 2.35f, -7.70f);
-    const vec P4(6.35f, 2.35f, -7.70f);
-    const vec P5(5.85f, 4.05f, -7.70f);
+    const vec P0(5.05f, 2.35f, -7.30f);
+    const vec P1(6.05f, 2.35f, -7.30f);
+    const vec P2(5.55f, 4.05f, -7.30f);
+    const vec P3(5.05f, 2.35f, -7.68f);
+    const vec P4(6.05f, 2.35f, -7.68f);
+    const vec P5(5.55f, 4.05f, -7.68f);
 
     extra_materials[m] = new metal(
         vec(0.88f, 0.91f, 0.97f), 0.08f);
@@ -1179,12 +1166,12 @@ __global__ void create_extra_geometry(
     ++m;
 
     // CENTER prism ---------------------------------------------------
-    const vec M0(6.55f, 2.35f, -7.55f);
-    const vec M1(7.55f, 2.35f, -7.55f);
-    const vec M2(7.05f, 4.30f, -7.55f);
-    const vec M3(6.55f, 2.35f, -7.90f);
-    const vec M4(7.55f, 2.35f, -7.90f);
-    const vec M5(7.05f, 4.30f, -7.90f);
+    const vec M0(6.35f, 2.35f, -7.56f);
+    const vec M1(7.35f, 2.35f, -7.56f);
+    const vec M2(6.85f, 4.30f, -7.56f);
+    const vec M3(6.35f, 2.35f, -7.94f);
+    const vec M4(7.35f, 2.35f, -7.94f);
+    const vec M5(6.85f, 4.30f, -7.94f);
 
     extra_materials[m] = new metal(
         vec(0.85f, 0.89f, 0.96f), 0.095f);
@@ -1193,12 +1180,12 @@ __global__ void create_extra_geometry(
     ++m;
 
     // RIGHT prism ----------------------------------------------------
-    const vec N0(7.75f, 2.35f, -7.80f);
-    const vec N1(8.75f, 2.35f, -7.80f);
-    const vec N2(8.25f, 4.30f, -7.80f);
-    const vec N3(7.75f, 2.35f, -8.15f);
-    const vec N4(8.75f, 2.35f, -8.15f);
-    const vec N5(8.25f, 4.30f, -8.15f);
+    const vec N0(7.55f, 2.35f, -7.86f);
+    const vec N1(8.55f, 2.35f, -7.86f);
+    const vec N2(8.05f, 4.30f, -7.86f);
+    const vec N3(7.55f, 2.35f, -8.22f);
+    const vec N4(8.55f, 2.35f, -8.22f);
+    const vec N5(8.05f, 4.30f, -8.22f);
 
     extra_materials[m] = new metal(
         vec(0.82f, 0.87f, 0.94f), 0.11f);
@@ -1207,21 +1194,33 @@ __global__ void create_extra_geometry(
     ++m;
 
     // The constants above match the actual solids constructed here:
-    // 66 cuboids + 12 individual triangle faces + 3 triangular prisms = 81 solids.
+    // 50 cuboids + 12 individual triangle faces + 3 triangular prisms = 65 solids.
     if(m != NUM_EXTRA_SOLIDS || c != NUM_EXTRA_CUBOIDS){
         printf("Scene geometry count mismatch: materials/shapes=%d expected=%d, cuboids=%d expected=%d\n",
                m, NUM_EXTRA_SOLIDS, c, NUM_EXTRA_CUBOIDS);
         return;
     }
 
-    // Sphere BVH is one entry in the outer list; all architectural shapes
-    // remain directly accessible as a small flat additive layer for now.
+    // Build one BVH over the entire base scene: the existing sphere BVH is
+    // treated as one leaf while all architectural solids become the other
+    // leaves. This removes the previous O(65) flat traversal from every path
+    // and shadow ray.
     extra_top_list[0] = *sphere_world;
     for(int i = 0; i < NUM_EXTRA_SOLIDS; ++i){
         extra_top_list[i+1] = final_shapes[i];
     }
 
-    *extra_world = new hittable_list(extra_top_list, NUM_EXTRA_SOLIDS + 1);
+    curandState bvh_state;
+    curand_init(3151ULL, 0, 0, &bvh_state);
+    int pool_index = 0;
+    *extra_world = build_bvh(
+        extra_top_list,
+        0,
+        NUM_EXTRA_SOLIDS + 1,
+        &bvh_state,
+        extra_bvh_pool,
+        &pool_index
+    );
 }
 
 __global__ void clear_extra_geometry(
@@ -1237,14 +1236,13 @@ __global__ void clear_extra_geometry(
         delete extra_materials[i];
     }
 
+    // BVH internal nodes live in extra_bvh_pool and are released with cudaFree.
     // Every cuboid is owned separately by its rotate_* wrapper, so the raw
     // cuboids must be deleted after the wrappers. Each triangular_prism owns
     // its eight internal triangle faces and frees those faces in its destructor.
     for(int i = 0; i < NUM_EXTRA_CUBOIDS; ++i){
         delete cuboid_boundaries[i];
     }
-
-    delete *extra_world;
 }
 
 // ---------------------------------------------------------------------
@@ -1252,6 +1250,7 @@ __global__ void clear_extra_geometry(
 // geometry so the scene has atmosphere without becoming a white fog image.
 // ---------------------------------------------------------------------
 #define NUM_FOG_VOLUMES 6
+#define ENABLE_VOLUMETRICS 0  // 0 = clean/faster showcase; 1 = volumetric showcase
 
 __global__ void create_volumetrics(
     hittable** in_world,
@@ -1260,6 +1259,7 @@ __global__ void create_volumetrics(
     material** fog_materials,
     hittable** fog_media,
     hittable** top_list,
+    bvh_node* final_bvh_pool,
     vec hero0, vec hero1, vec hero2
 ){
     if(threadIdx.x != 0 || blockIdx.x != 0) return;
@@ -1304,12 +1304,24 @@ __global__ void create_volumetrics(
     fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.006f, fog_materials[idx]);
     ++idx;
 
+    // BVH over the base scene plus the six volume regions. This also prevents
+    // every ray from linearly testing all volume boundaries.
     top_list[0] = *in_world;
     for(int i = 0; i < idx; ++i){
         top_list[i+1] = fog_media[i];
     }
 
-    *out_world = new hittable_list(top_list, idx + 1);
+    curandState bvh_state;
+    curand_init(6027ULL, 0, 0, &bvh_state);
+    int pool_index = 0;
+    *out_world = build_bvh(
+        top_list,
+        0,
+        idx + 1,
+        &bvh_state,
+        final_bvh_pool,
+        &pool_index
+    );
 }
 
 __global__ void clear_volumetrics(
@@ -1325,8 +1337,7 @@ __global__ void clear_volumetrics(
         delete fog_materials[i];
         delete fog_boundaries[i];
     }
-
-    delete *out_world;
+    // BVH nodes live in final_bvh_pool and are released with cudaFree.
 }
 
 int main(){
@@ -1361,9 +1372,7 @@ int main(){
     const vec central_light_emission(30.0f, 26.0f, 22.0f);
 
     std::vector<sphereDesc> h_scene;
-    std::vector<vec> h_light_centres;
-    std::vector<float> h_light_radii;
-    std::vector<vec> h_light_emissions;
+    std::vector<scene_light> h_lights;
 
     auto add_light = [&](const vec& centre, float radius, const vec& emission){
         h_scene.push_back({
@@ -1374,9 +1383,12 @@ int main(){
             0.0f
         });
 
-        h_light_centres.push_back(centre);
-        h_light_radii.push_back(radius);
-        h_light_emissions.push_back(emission);
+        h_lights.push_back({
+            centre,
+            radius,
+            4.0f * 3.14159265359f * radius * radius,
+            emission
+        });
     };
 
     // -----------------------------------------------------------------
@@ -1452,7 +1464,11 @@ int main(){
 
     // Exactly ten sampled spherical lights:
     //   1 central key + 5 stair lights + 4 right-side lights.
-    const int light_count = static_cast<int>(h_light_centres.size());
+    const int light_count = static_cast<int>(h_lights.size());
+    if(light_count > MAX_SCENE_LIGHTS){
+        std::cerr << "Too many scene lights for constant-memory table." << std::endl;
+        return 1;
+    }
 
     // -----------------------------------------------------------------
     // DELIBERATE SPHERICAL PROPS
@@ -1663,50 +1679,36 @@ int main(){
     int node_pool_count =
         object_count > 1 ? 2 * object_count - 1 : 1;
 
+    // Separate pools keep the prebuilt BVHs independently addressable.
+    bvh_node* d_extra_bvh_pool;
+    const int extra_bvh_node_count =
+        2 * (NUM_EXTRA_SOLIDS + 1) - 1;
+
+    bvh_node* d_final_bvh_pool;
+    const int final_bvh_node_count =
+        2 * (NUM_FOG_VOLUMES + 1) - 1;
+
     CUDA_CHECK(cudaMalloc(
         (void**)&d_node_pool,
         node_pool_count * sizeof(bvh_node)
     ));
 
-    // Multi-light arrays consumed by ray_color() and pdf.h.
-    vec* d_light_centres;
-    float* d_light_radii;
-    vec* d_light_emissions;
-
     CUDA_CHECK(cudaMalloc(
-        (void**)&d_light_centres,
-        light_count * sizeof(vec)
+        (void**)&d_extra_bvh_pool,
+        extra_bvh_node_count * sizeof(bvh_node)
     ));
 
     CUDA_CHECK(cudaMalloc(
-        (void**)&d_light_radii,
-        light_count * sizeof(float)
+        (void**)&d_final_bvh_pool,
+        final_bvh_node_count * sizeof(bvh_node)
     ));
 
-    CUDA_CHECK(cudaMalloc(
-        (void**)&d_light_emissions,
-        light_count * sizeof(vec)
-    ));
-
-    CUDA_CHECK(cudaMemcpy(
-        d_light_centres,
-        h_light_centres.data(),
-        light_count * sizeof(vec),
-        cudaMemcpyHostToDevice
-    ));
-
-    CUDA_CHECK(cudaMemcpy(
-        d_light_radii,
-        h_light_radii.data(),
-        light_count * sizeof(float),
-        cudaMemcpyHostToDevice
-    ));
-
-    CUDA_CHECK(cudaMemcpy(
-        d_light_emissions,
-        h_light_emissions.data(),
-        light_count * sizeof(vec),
-        cudaMemcpyHostToDevice
+    // Upload the small light table once. It stays resident in constant memory
+    // for the complete render.
+    CUDA_CHECK(cudaMemcpyToSymbol(
+        g_scene_lights,
+        h_lights.data(),
+        light_count * sizeof(scene_light)
     ));
 
     // Extra architectural layer.
@@ -1797,7 +1799,8 @@ int main(){
         d_cuboid_boundaries,
         d_extra_materials,
         d_final_shapes,
-        d_extra_top_list
+        d_extra_top_list,
+        d_extra_bvh_pool
     );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -1807,6 +1810,7 @@ int main(){
     const vec hero1( 0.00f, 1.80f, -8.85f);
     const vec hero2( 3.40f, 1.63f, -8.31f);
 
+#if ENABLE_VOLUMETRICS
     create_volumetrics<<<1,1>>>(
         d_extra_world,
         d_final_world,
@@ -1814,12 +1818,23 @@ int main(){
         d_fog_materials,
         d_fog_media,
         d_top_list,
+        d_final_bvh_pool,
         hero0,
         hero1,
         hero2
     );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
+#else
+    // No volumetric pass in the clean showcase. Reuse the already built
+    // surface/base-scene BVH without another traversal layer.
+    CUDA_CHECK(cudaMemcpy(
+        d_final_world,
+        d_extra_world,
+        sizeof(hittable*),
+        cudaMemcpyDeviceToDevice
+    ));
+#endif
 
     // -----------------------------------------------------------------
     // RENDER
@@ -1834,12 +1849,17 @@ int main(){
 
     // Cheap validation render. Increase this only after composition is approved.
     const int samples_per_pixel = 64;
-    const int samples_per_batch = 8;
+    const int samples_per_batch = samples_per_pixel;
     const int num_batches =
         (samples_per_pixel + samples_per_batch - 1) /
         samples_per_batch;
 
     CUDA_CHECK(cudaMemset(d_fb, 0, fb_size));
+
+    cudaEvent_t render_start, render_stop;
+    CUDA_CHECK(cudaEventCreate(&render_start));
+    CUDA_CHECK(cudaEventCreate(&render_stop));
+    CUDA_CHECK(cudaEventRecord(render_start));
 
     for(int batch = 0; batch < num_batches; ++batch){
         int this_batch = std::min(
@@ -1854,9 +1874,6 @@ int main(){
             cam,
             d_final_world,
             d_states,
-            d_light_centres,
-            d_light_radii,
-            d_light_emissions,
             light_count,
             this_batch
         );
@@ -1871,6 +1888,16 @@ int main(){
                   << std::endl;
     }
 
+    CUDA_CHECK(cudaEventRecord(render_stop));
+    CUDA_CHECK(cudaEventSynchronize(render_stop));
+    float render_ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&render_ms, render_start, render_stop));
+    CUDA_CHECK(cudaEventDestroy(render_start));
+    CUDA_CHECK(cudaEventDestroy(render_stop));
+
+    std::cout << "GPU render time: " << render_ms << " ms ("
+              << (render_ms / 1000.0f) << " s)" << std::endl;
+
     CUDA_CHECK(cudaMemcpy(
         h_fb,
         d_fb,
@@ -1881,45 +1908,41 @@ int main(){
     // -----------------------------------------------------------------
     // OUTPUT
     // -----------------------------------------------------------------
-    std::ofstream file("image.ppm");
-    file << "P3\n"
+    // Binary PPM avoids millions of formatted integer writes; image quality
+    // is identical to the previous P3 output.
+    std::ofstream file("image.ppm", std::ios::binary);
+    file << "P6\n"
          << image_width << " " << image_height << "\n"
          << "255\n";
 
+    std::vector<unsigned char> pixels(total_pixels * 3);
     for(int j = image_height - 1; j >= 0; --j){
         for(int i = 0; i < image_width; ++i){
             int pixel_index = j * image_width + i;
             vec pixel_color = h_fb[pixel_index];
 
-            float r_ =
-                de_nan(pixel_color.x()) /
-                float(samples_per_pixel);
-
-            float g_ =
-                de_nan(pixel_color.y()) /
-                float(samples_per_pixel);
-
-            float b_ =
-                de_nan(pixel_color.z()) /
-                float(samples_per_pixel);
+            float r_ = de_nan(pixel_color.x()) / float(samples_per_pixel);
+            float g_ = de_nan(pixel_color.y()) / float(samples_per_pixel);
+            float b_ = de_nan(pixel_color.z()) / float(samples_per_pixel);
 
             r_ = sqrtf(clamp01(r_));
             g_ = sqrtf(clamp01(g_));
             b_ = sqrtf(clamp01(b_));
 
-            int ir = static_cast<int>(255.999f * r_);
-            int ig = static_cast<int>(255.999f * g_);
-            int ib = static_cast<int>(255.999f * b_);
-
-            file << ir << " " << ig << " " << ib << "\n";
+            const int output_row = image_height - 1 - j;
+            size_t out_idx = (size_t(output_row) * size_t(image_width) + size_t(i)) * 3;
+            pixels[out_idx + 0] = static_cast<unsigned char>(255.999f * r_);
+            pixels[out_idx + 1] = static_cast<unsigned char>(255.999f * g_);
+            pixels[out_idx + 2] = static_cast<unsigned char>(255.999f * b_);
         }
     }
-
+    file.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
     file.close();
 
     // -----------------------------------------------------------------
     // CLEANUP
     // -----------------------------------------------------------------
+#if ENABLE_VOLUMETRICS
     clear_volumetrics<<<1,1>>>(
         d_final_world,
         d_fog_boundaries,
@@ -1928,6 +1951,7 @@ int main(){
     );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
+#endif
 
     clear_extra_geometry<<<1,1>>>(
         d_extra_world,
@@ -1953,10 +1977,8 @@ int main(){
     cudaFree(d_materials);
     cudaFree(d_descs);
     cudaFree(d_node_pool);
-
-    cudaFree(d_light_centres);
-    cudaFree(d_light_radii);
-    cudaFree(d_light_emissions);
+    cudaFree(d_extra_bvh_pool);
+    cudaFree(d_final_bvh_pool);
 
     cudaFree(d_extra_world);
     cudaFree(d_cuboid_boundaries);

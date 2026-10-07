@@ -9,10 +9,18 @@ class material ;
 class triangle : public hittable{
 public:
     vec v0 , v1 , v2 ;
+    vec edge1, edge2;
+    vec face_normal;
     material* mat_ptr;
 
-    __host__ __device__ triangle() : v0() , v1() , v2() , mat_ptr(nullptr) {}
-    __host__ __device__ triangle(vec a , vec b , vec c , material* m) : v0(a) , v1(b) ,v2(c) , mat_ptr(m) {}
+    __host__ __device__ triangle()
+        : v0(), v1(), v2(), edge1(), edge2(), face_normal(), mat_ptr(nullptr) {}
+
+    __host__ __device__ triangle(vec a , vec b , vec c , material* m)
+        : v0(a), v1(b), v2(c),
+          edge1(b - a), edge2(c - a),
+          face_normal(unit_vector(cross(b - a, c - a))),
+          mat_ptr(m) {}
 
     __host__ __device__ virtual bool hit(const ray& r , float t_min , float t_max , hit_record& rec , curandState* local_state) const override;
 
@@ -34,8 +42,8 @@ public:
 };
 
 __host__ __device__ bool triangle::hit(const ray& r , float t_min , float t_max , hit_record& rec , curandState* local_state) const{
-    vec e1 = v1 - v0;
-    vec e2 = v2 - v0;
+    const vec& e1 = edge1;
+    const vec& e2 = edge2;
 
     vec h = cross(r.direction(), e2);
     float a = dot(e1 , h);
@@ -66,8 +74,7 @@ __host__ __device__ bool triangle::hit(const ray& r , float t_min , float t_max 
 
     rec.t = t;
     rec.p = r.parametric_eqn(rec.t);
-    vec outward_normal = unit_vector(cross(e1 ,e2));
-    rec.set_face_normal(r , outward_normal);
+    rec.set_face_normal(r , face_normal);
     rec.mat = mat_ptr;
     
     return true;

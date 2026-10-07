@@ -11,8 +11,8 @@ __device__ inline vec random_unit_disk(curandState* local_state){
             random_float(-1.0f ,1.0f , local_state), 
             0.0f
         );
+        
         if(p.length_squared() >= 1) continue;
-
         return p ;
     }
 }
@@ -51,6 +51,9 @@ public:
     }
 
     __device__ ray get_ray(float s , float t , curandState* local_state)const {
+        if(lens_radius <= 0.0f){
+            return ray( origin, lower_left_corner + s * horizontal + t * vertical - origin);
+        }
         vec rd = lens_radius * random_unit_disk(local_state);
         vec offset = rd.x() * u + rd.y() * v ;
 

@@ -27,9 +27,9 @@ public:
                 continue;
             }
 
-            float invD = 1.0f / direction;
-            float t0 = (min()[a] - r.origin()[a]) * invD ;
-            float t1 = (max()[a] - r.origin()[a]) * invD ;
+            float invD = r.inv_direction()[a];
+            float t0 = (minimum[a] - r.origin()[a]) * invD ;
+            float t1 = (maximum[a] - r.origin()[a]) * invD ;
             
             if(invD < 0.0f){
                 float temp = t0;

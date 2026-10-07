@@ -5,6 +5,17 @@
 #include "random.h"
 #include "hittable.h"
 #define PI 3.14159265359f
+#define MAX_SCENE_LIGHTS 16
+
+// Small, read-only scene-light table. 
+struct scene_light{
+    vec centre;
+    float radius;
+    float area;
+    vec emission;
+};
+
+extern __constant__ scene_light g_scene_lights[MAX_SCENE_LIGHTS];
 
 struct onb{
     vec axis[3];
@@ -129,12 +140,11 @@ public:
 
 class multi_sphere_pdf{
 public:
-    vec origin ;
-    const vec* light_centres;
-    const float* light_radii;
+    vec origin;
     int light_count;
 
-    __device__ multi_sphere_pdf(const vec& orig,const vec* centres,const float* radii,int count) : origin(orig) , light_centres(centres) , light_radii(radii) , light_count(count) {}
+    __device__ multi_sphere_pdf(const vec& orig, int count)
+        : origin(orig), light_count(count) {}
 
     __device__ float value(const vec& direction)const{
         if(light_count <= 0){
@@ -145,7 +155,7 @@ public:
         float result = 0.0f;
 
         for(int i = 0 ; i < light_count ; i++){
-            sphere_pdf light_pdf(origin , light_centres[i] , light_radii[i]);
+            sphere_pdf light_pdf( origin, g_scene_lights[i].centre, g_scene_lights[i].radius );
 
             // P(select light i) * PDF(direction | light i)
             result += selection_probability * light_pdf.value(direction);
@@ -163,7 +173,7 @@ public:
             light_index = light_count - 1;
         }
 
-        sphere_pdf selected_light(origin , light_centres[light_index] , light_radii[light_index]);
+        sphere_pdf selected_light( origin, g_scene_lights[light_index].centre, g_scene_lights[light_index].radius);
         return selected_light.generate(local_state);
     }
 };
