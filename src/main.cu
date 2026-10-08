@@ -651,7 +651,7 @@ __global__ void clear_world(hittable** list, material** materials, int count) {
 // controlled depth-of-field demonstrate the renderer's full feature set.
 // There is no random RTIOW sphere field; spheres are deliberate secondary props.
 // ---------------------------------------------------------------------
-#define NUM_EXTRA_CUBOIDS 50
+#define NUM_EXTRA_CUBOIDS 66
 #define NUM_EXTRA_TRIANGLE_FACES 12
 #define NUM_EXTRA_TRIANGULAR_PRISMS 3
 #define NUM_EXTRA_SOLIDS (NUM_EXTRA_CUBOIDS + NUM_EXTRA_TRIANGLE_FACES + NUM_EXTRA_TRIANGULAR_PRISMS)
