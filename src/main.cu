@@ -510,8 +510,8 @@ __device__ vec ray_color(
             // Enclosed atrium: do not feed a bright blue sky into the
             // reflective floor. The reference scene has a dark interior fill.
             vec sky =
-                (1.0f - t) * vec(0.065f, 0.070f, 0.078f) +
-                t * vec(0.105f, 0.120f, 0.135f);
+                (1.0f - t) * vec(0.105f, 0.112f, 0.122f) +
+                t * vec(0.165f, 0.185f, 0.205f);
 
             accumulated_light += curr_attenuated * sky;
             return accumulated_light;
@@ -674,7 +674,7 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
 
     // 1. Reflective floor.
-    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.51f), 0.095f);
+    extra_materials[m] = new metal(vec(0.50f, 0.54f, 0.61f), 0.070f);
     cuboid_boundaries[c] = new cuboid(
         vec(-10.0f, 0.0f, -20.0f), vec(10.0f, 0.22f, 2.0f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 0.0f, 0.0f), 0.0f);
@@ -757,8 +757,8 @@ __global__ void create_extra_geometry(
     // assembly, matching the reference's broad horizontal display ledge.
     extra_materials[m] = new metal(vec(0.24f, 0.27f, 0.30f), 0.28f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.55f, 2.48f, -8.75f), vec(9.50f, 2.78f, -7.25f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.525f, 2.63f, -8.00f), 0.0f);
+        vec(5.95f, 2.10f, -8.75f), vec(9.50f, 2.40f, -7.25f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.725f, 2.25f, -8.00f), 0.0f);
     ++m; ++c;
 
     // 15-19. Five-step staircase on the left, deliberately geometric rather
@@ -1163,33 +1163,33 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
     // Each visible triangle is now a genuine solid with front/back faces
     // and six connecting side faces. All bases sit directly on the right
-    // platform top at y = 2.78f.  The three solids are separated in X and
+    // platform top at y = 2.40f.  The three solids are separated in X and
     // slightly staggered in Z so their silhouettes remain distinct.
 
     // LEFT prism ------------------------------------------------------
-    const vec P0(5.60f, 2.78f, -7.95f);
-    const vec P1(6.50f, 2.78f, -7.95f);
-    const vec P2(6.05f, 4.42f, -7.95f);
-    const vec P3(5.60f, 2.78f, -7.62f);
-    const vec P4(6.50f, 2.78f, -7.62f);
-    const vec P5(6.05f, 4.42f, -7.62f);
+    const vec P0(6.02f, 2.40f, -7.95f);
+    const vec P1(6.92f, 2.40f, -7.95f);
+    const vec P2(6.47f, 4.04f, -7.95f);
+    const vec P3(6.02f, 2.40f, -7.62f);
+    const vec P4(6.92f, 2.40f, -7.62f);
+    const vec P5(6.47f, 4.04f, -7.62f);
 
     extra_materials[m] = new metal(
-        vec(0.84f, 0.88f, 0.94f), 0.14f);
+        vec(0.93f, 0.95f, 0.98f), 0.105f);
     final_shapes[m] = new triangular_prism(
         P0, P1, P2, P3, P4, P5, extra_materials[m]);
     ++m;
 
     // CENTER prism ---------------------------------------------------
-    const vec M0(6.95f, 2.78f, -7.85f);
-    const vec M1(7.95f, 2.78f, -7.85f);
-    const vec M2(7.45f, 4.42f, -7.85f);
-    const vec M3(6.95f, 2.78f, -7.45f);
-    const vec M4(7.95f, 2.78f, -7.45f);
-    const vec M5(7.45f, 4.42f, -7.45f);
+    const vec M0(7.37f, 2.40f, -7.85f);
+    const vec M1(8.37f, 2.40f, -7.85f);
+    const vec M2(7.87f, 4.04f, -7.85f);
+    const vec M3(7.37f, 2.40f, -7.45f);
+    const vec M4(8.37f, 2.40f, -7.45f);
+    const vec M5(7.87f, 4.04f, -7.45f);
 
     extra_materials[m] = new metal(
-        vec(0.82f, 0.87f, 0.94f), 0.16f);
+        vec(0.18f, 0.38f, 0.58f), 0.11f);
     final_shapes[m] = new triangular_prism(
         M0, M1, M2, M3, M4, M5, extra_materials[m]);
     ++m;
@@ -1197,15 +1197,15 @@ __global__ void create_extra_geometry(
     // RIGHT prism ----------------------------------------------------
     // Shift the rightmost prism left so the full silhouette clears the
     // right wall/panel while preserving its height and stagger.
-    const vec N0(8.00f, 2.78f, -7.90f);
-    const vec N1(9.00f, 2.78f, -7.90f);
-    const vec N2(8.50f, 4.46f, -7.90f);
-    const vec N3(8.00f, 2.78f, -7.54f);
-    const vec N4(9.00f, 2.78f, -7.54f);
-    const vec N5(8.50f, 4.46f, -7.54f);
+    const vec N0(8.42f, 2.40f, -7.90f);
+    const vec N1(9.42f, 2.40f, -7.90f);
+    const vec N2(8.92f, 4.08f, -7.90f);
+    const vec N3(8.42f, 2.40f, -7.54f);
+    const vec N4(9.42f, 2.40f, -7.54f);
+    const vec N5(8.92f, 4.08f, -7.54f);
 
     extra_materials[m] = new metal(
-        vec(0.78f, 0.83f, 0.90f), 0.18f);
+        vec(0.44f, 0.48f, 0.55f), 0.145f);
     final_shapes[m] = new triangular_prism(
         N0, N1, N2, N3, N4, N5, extra_materials[m]);
     ++m;
@@ -1381,12 +1381,12 @@ int main(){
     // -----------------------------------------------------------------
     // LIGHTING DESIGN
     // -----------------------------------------------------------------
-    // The central key is deliberately smaller on camera than before.  Its
-    // radiance is not increased; the local lights now carry the near-field
-    // illumination so the scene does not depend on making the key enormous.
-    const vec central_light_centre(0.00f, 6.65f, -9.15f);
-    const float central_light_radius = 0.90f;
-    const vec central_light_emission(58.0f, 54.0f, 50.0f);
+    // The central key is slightly smaller on camera than the first reference
+    // approximation; the brighter near-field fills are responsible for
+    // restoring readable architecture and floor reflections.
+    const vec central_light_centre(0.85f, 6.45f, -9.15f);
+    const float central_light_radius = 0.78f;
+    const vec central_light_emission(84.0f, 78.0f, 71.0f);
 
     std::vector<sphereDesc> h_scene;
     std::vector<scene_light> h_lights;
@@ -1431,7 +1431,7 @@ int main(){
         -4.8f, -5.8f, -6.8f, -7.8f, -8.8f
     };
 
-    const vec stair_light_emission(30.0f, 13.5f, 3.8f);
+    const vec stair_light_emission(42.0f, 18.0f, 4.8f);
     const float stair_light_radius = 0.10f;
 
     for(int i = 0; i < 5; ++i){
@@ -1459,37 +1459,63 @@ int main(){
     // the false floating white orb on a triangle apex.
     h_lights.push_back({
         vec(6.15f, 2.55f, -6.95f), 0.18f,
-        4.0f * 3.14159265359f * 0.18f * 0.18f, vec(2.2f, 8.5f, 13.5f)
+        4.0f * 3.14159265359f * 0.18f * 0.18f, vec(4.0f, 13.0f, 22.0f)
     });
 
     h_lights.push_back({
         vec(8.75f, 2.55f, -7.05f), 0.18f,
-        4.0f * 3.14159265359f * 0.18f * 0.18f, vec(2.2f, 8.5f, 13.5f)
+        4.0f * 3.14159265359f * 0.18f * 0.18f, vec(4.0f, 13.0f, 22.0f)
     });
 
     h_lights.push_back({
         vec(7.70f, 3.15f, -6.75f), 0.16f,
-        4.0f * 3.14159265359f * 0.16f * 0.16f, vec(2.0f, 7.0f, 11.0f)
+        4.0f * 3.14159265359f * 0.16f * 0.16f, vec(3.0f, 11.0f, 19.0f)
     });
 
     h_lights.push_back({
         vec(8.20f, 2.60f, -9.20f), 0.18f,
-        4.0f * 3.14159265359f * 0.18f * 0.18f, vec(1.8f, 7.0f, 11.0f)
+        4.0f * 3.14159265359f * 0.18f * 0.18f, vec(2.5f, 10.0f, 18.0f)
     });
 
     // Camera-side fills are sampled only: they illuminate the foreground and
     // floor without becoming visible spherical objects.
     h_lights.push_back({
-        vec(1.0f, 4.60f, 1.20f), 2.80f,
-        4.0f * 3.14159265359f * 2.80f * 2.80f, vec(20.0f, 18.0f, 16.0f)
+        vec(1.10f, 4.80f, 0.80f), 2.80f,
+        4.0f * 3.14159265359f * 2.80f * 2.80f, vec(50.0f, 46.0f, 41.0f)
     });
 
     h_lights.push_back({
-        vec(-4.80f, 3.80f, 0.60f), 1.80f,
-        4.0f * 3.14159265359f * 1.80f * 1.80f, vec(10.0f, 9.0f, 8.0f)
+        vec(-4.20f, 3.60f, 0.80f), 1.80f,
+        4.0f * 3.14159265359f * 1.80f * 1.80f, vec(24.0f, 22.0f, 20.0f)
     });
 
-    // 1 central key + 5 stair lights + 6 right-side/front-fill sampled lights;
+    // Warm practical fill for the red/orange wall bars and staircase reflections.
+    h_lights.push_back({
+        vec(-0.80f, 3.30f, -7.40f), 1.30f,
+        4.0f * 3.14159265359f * 1.30f * 1.30f, vec(28.0f, 10.0f, 2.8f)
+    });
+
+    // Cool practical fill for the right display shelf and its floor reflection.
+    h_lights.push_back({
+        vec(7.90f, 3.20f, -7.30f), 1.40f,
+        4.0f * 3.14159265359f * 1.40f * 1.40f, vec(3.0f, 13.0f, 23.0f)
+    });
+
+    // Low camera-side floor fill: directly restores the bright neutral
+    // foreground reflections without making the room globally flat.
+    h_lights.push_back({
+        vec(1.80f, 1.65f, 0.70f), 1.65f,
+        4.0f * 3.14159265359f * 1.65f * 1.65f, vec(24.0f, 23.0f, 22.0f)
+    });
+
+    // Low right-side cyan fill: puts colored energy into the reflective
+    // floor under the display shelf rather than only on the wall.
+    h_lights.push_back({
+        vec(7.60f, 1.45f, -9.80f), 1.45f,
+        4.0f * 3.14159265359f * 1.45f * 1.45f, vec(3.0f, 12.0f, 21.0f)
+    });
+
+    // 1 central key + 5 stair lights + 10 right-side/front/floor sampled lights;
     // right-side lights are illumination-only so no emitter is glued to a triangle apex.
     const int light_count = static_cast<int>(h_lights.size());
     if(light_count > MAX_SCENE_LIGHTS){
@@ -1503,9 +1529,9 @@ int main(){
     // The architecture remains the main subject.  Spheres are deliberate
     // secondary material demonstrations rather than a random RTIOW field.
     const vec hero_spheres[3] = {
-        vec(0.00f, 1.80f, -8.85f),     // chrome orb seated on central platform (top y=0.68)
-        vec(6.40f, 0.88f, -14.60f),    // warm diffuse sphere seated on floor
-        vec(-1.75f, 0.94f, -5.70f)     // foreground glass sphere seated on floor
+        vec(0.90f, 1.80f, -8.85f),     // chrome orb seated on central platform (top y=0.68)
+        vec(7.10f, 0.92f, -14.55f),    // large chrome sphere in the lower-right foreground
+        vec(-1.35f, 0.94f, -5.70f)     // foreground glass sphere seated on floor
     };
 
     // Central nearly-perfect chrome orb: the primary focal point.
@@ -1521,9 +1547,9 @@ int main(){
     h_scene.push_back({
         hero_spheres[1],
         0.66f,
-        MAT_LAMBERTIAN,
-        vec(0.72f, 0.16f, 0.07f),
-        0.0f
+        MAT_METAL,
+        vec(0.86f, 0.89f, 0.94f),
+        0.075f
     });
 
     // Smaller foreground dielectric sphere.
@@ -1556,12 +1582,12 @@ int main(){
     });
 
     h_scene.push_back({
-        vec(7.20f, 0.62f, -8.90f), 0.36f,
+        vec(7.75f, 0.62f, -8.90f), 0.36f,
         MAT_METAL, vec(0.72f, 0.75f, 0.80f), 0.08f
     });
 
     h_scene.push_back({
-        vec(6.00f, 0.58f, -4.90f), 0.44f,
+        vec(6.65f, 0.58f, -4.90f), 0.44f,
         MAT_METAL, vec(0.55f, 0.58f, 0.64f), 0.10f
     });
 
@@ -1906,7 +1932,7 @@ int main(){
             int pixel_index = j * image_width + i;
             vec pixel_color = h_fb[pixel_index];
 
-            constexpr float display_exposure = 1.18f;
+            constexpr float display_exposure = 1.28f;
             float r_ = display_exposure * de_nan(pixel_color.x()) / float(samples_per_pixel);
             float g_ = display_exposure * de_nan(pixel_color.y()) / float(samples_per_pixel);
             float b_ = display_exposure * de_nan(pixel_color.z()) / float(samples_per_pixel);
