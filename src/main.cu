@@ -17,9 +17,6 @@
 #include "triangle.h"
 #include "constant_medium.h"
 
-// __constant__ float4 g_light_center_radius[MAX_SCENE_LIGHTS];
-// __constant__ float4 g_light_emission[MAX_SCENE_LIGHTS];
-
 #define CUDA_CHECK(call)                                                        \
     do {                                                                        \
         cudaError_t err__ = (call);                                             \
@@ -510,9 +507,11 @@ __device__ vec ray_color(
             vec unit_direction = unit_vector(curr_ray.direction());
             float t = 0.5f * (unit_direction.y() + 1.0f);
 
+            // Enclosed atrium: do not feed a bright blue sky into the
+            // reflective floor. The reference scene has a dark interior fill.
             vec sky =
-                (1.0f - t) * vec(1.0f, 1.0f, 1.0f) +
-                t * vec(0.5f, 0.7f, 1.0f);
+                (1.0f - t) * vec(0.012f, 0.016f, 0.024f) +
+                t * vec(0.025f, 0.045f, 0.075f);
 
             accumulated_light += curr_attenuated * sky;
             return accumulated_light;
@@ -622,7 +621,7 @@ __global__ void create_world(hittable** list , hittable** world , material** mat
     }
 
     // Original code built a flat hittable_list here, which is O(count) per
-    // ray -- fine for two spheres, very much not fine for a few hundred.
+    // ray -- fine for two spheres, very much not fine for a dozens of objects.
     // Build a BVH over the same objects instead (see bvh_node.h).
     curandState local_state;
     curand_init(1984ULL, 0, 0, &local_state);
@@ -647,8 +646,8 @@ __global__ void clear_world(hittable** list, material** materials, int count) {
 //
 // The final showcase scene is deliberately architectural: large cuboids and
 // explicit triangle assemblies carry the composition, while GGX metals, dielectric
-// glass, emissive neon surfaces, six low-density volumes, reflective flooring and
-// controlled depth-of-field demonstrate the renderer's full feature set.
+// glass, emissive neon surfaces, reflective flooring and GPU path tracing define the
+// showcase. Optional volumetrics remain in the codebase but are disabled for this render.
 // There is no random RTIOW sphere field; spheres are deliberate secondary props.
 // ---------------------------------------------------------------------
 #define NUM_EXTRA_CUBOIDS 66
@@ -675,7 +674,7 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
 
     // 1. Reflective floor.
-    extra_materials[m] = new metal(vec(0.48f, 0.51f, 0.58f), 0.13f);
+    extra_materials[m] = new metal(vec(0.40f, 0.43f, 0.49f), 0.075f);
     cuboid_boundaries[c] = new cuboid(
         vec(-10.0f, 0.0f, -20.0f), vec(10.0f, 0.22f, 2.0f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 0.0f, 0.0f), 0.0f);
@@ -754,10 +753,12 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-7.15f, 2.5f, -10.0f), 0.0f);
     ++m; ++c;
 
+    // Right display shelf: a thin, long slab positioned behind the hero
+    // assembly, matching the reference's broad horizontal display ledge.
     extra_materials[m] = new metal(vec(0.24f, 0.27f, 0.30f), 0.28f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.3f, 2.05f, -13.0f), vec(9.0f, 2.35f, -7.0f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.15f, 2.2f, -10.0f), 0.0f);
+        vec(5.55f, 2.48f, -8.75f), vec(9.50f, 2.78f, -7.25f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.525f, 2.63f, -8.00f), 0.0f);
     ++m; ++c;
 
     // 15-19. Five-step staircase on the left, deliberately geometric rather
@@ -807,15 +808,15 @@ __global__ void create_extra_geometry(
     }
 
     // Two repeated vertical supports below the catwalks.
-    const float support_x[2] = { -7.2f, 7.2f };
+    const float support_x[2] = { -7.2f, 9.05f };
     for(int i = 0; i < 2; ++i){
         extra_materials[m] = new metal(vec(0.16f, 0.18f, 0.22f), 0.22f);
         float x = support_x[i];
         cuboid_boundaries[c] = new cuboid(
-            vec(x-0.22f, 0.0f, -10.8f),
-            vec(x+0.22f, 2.30f, -10.38f),
+            vec(x-0.18f, 0.0f, -8.20f),
+            vec(x+0.18f, 2.48f, -7.55f),
             extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(x, 1.15f, -10.59f), 0.0f);
+        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(x, 1.24f, -7.88f), 0.0f);
         ++m; ++c;
     }
 
@@ -916,72 +917,80 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-2.75f, 0.96f, -8.05f), 28.0f);
     ++m; ++c;
 
-    // 34-35. Foreground diagonal plates.
-    // These must be flat X-Z slabs, not Z-rotated cuboids.  Because the camera
-    // is offset to the right, the two world-space angles are deliberately
-    // different so the projected shapes read as matching diagonal braces.
-    // Both remain 0.70..0.94 in Y, i.e. just above the 0.68 platform top.
+    // 34-35. Foreground diagonal V-braces.
+    // These are reconstructed from the reference image in camera space.
+    // With the final camera below, the projected right brace is approximately
+    // 23 degrees downward to the right and the left brace approximately 24
+    // degrees upward to the right.  Their world-space yaw values therefore
+    // differ from their apparent image-space slopes.
 
-    // 34 - LEFT plate.  Keep it in front of the left glass prism.
-    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
-    cuboid_boundaries[c] = new cuboid(
-        vec(-6.65f, 0.70f, -9.75f),
-        vec(-3.65f, 0.94f, -9.55f),
-        extra_materials[m]);
-    final_shapes[m] = new rotate_y(
-        cuboid_boundaries[c],
-        vec(-5.15f, 0.82f, -9.65f),
-        15.0f);
+    // LEFT foreground brace: approximately (-9.45,-8.41) -> (-4.08,-0.64)
+    // in world X-Z at top surface y ~= 0.50.
+    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.16f);
+    {
+        const float L = 9.44f;
+        const float W = 0.34f;
+        const float ang = 55.3f;
+        const vec center(-6.76f, 0.37f, -4.53f);
+        cuboid_boundaries[c] = new cuboid(
+            vec(-L*0.5f, 0.22f, -W*0.5f),
+            vec( L*0.5f, 0.50f,  W*0.5f),
+            extra_materials[m]);
+        final_shapes[m] = new rotate_y(cuboid_boundaries[c], center, ang);
+    }
     ++m; ++c;
 
-    // 35 - RIGHT plate.  Keep it between the central platform and the right
-    // machine, in front of the right glass prism.
-    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
-    cuboid_boundaries[c] = new cuboid(
-        vec(3.65f, 0.70f, -9.25f),
-        vec(6.65f, 0.94f, -9.05f),
-        extra_materials[m]);
-    final_shapes[m] = new rotate_y(
-        cuboid_boundaries[c],
-        vec(5.15f, 0.82f, -9.15f),
-        -18.0f);
+    // RIGHT foreground brace: approximately (3.50,-11.77) -> (6.45,-7.63)
+    // in world X-Z at top surface y ~= 0.50.
+    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.16f);
+    {
+        const float L = 5.09f;
+        const float W = 0.34f;
+        const float ang = 54.6f;
+        const vec center(4.97f, 0.37f, -9.70f);
+        cuboid_boundaries[c] = new cuboid(
+            vec(-L*0.5f, 0.22f, -W*0.5f),
+            vec( L*0.5f, 0.50f,  W*0.5f),
+            extra_materials[m]);
+        final_shapes[m] = new rotate_y(cuboid_boundaries[c], center, ang);
+    }
     ++m; ++c;
 
     // 36-42. A compact industrial machine housing on the right side.
     extra_materials[m] = new metal(vec(0.10f, 0.12f, 0.15f), 0.18f);
     cuboid_boundaries[c] = new cuboid(
-        vec(4.9f, 0.25f, -12.7f), vec(7.7f, 1.25f, -10.6f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.3f, 0.75f, -11.65f), 0.0f);
+        vec(5.65f, 0.25f, -13.25f), vec(9.55f, 1.35f, -11.45f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.60f, 0.80f, -12.35f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.20f, 0.22f, 0.26f), 0.12f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.25f, 1.25f, -12.35f), vec(5.7f, 4.1f, -11.8f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(5.48f, 2.7f, -12.1f), 0.0f);
+        vec(6.15f, 1.25f, -12.90f), vec(6.65f, 3.95f, -12.35f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.40f, 2.60f, -12.63f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.58f, 0.18f, 0.08f), 0.14f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.0f, 3.8f, -12.55f), vec(7.7f, 4.2f, -11.0f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.35f, 4.0f, -11.8f), 0.0f);
+        vec(5.70f, 3.75f, -12.65f), vec(9.25f, 4.15f, -11.15f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.48f, 3.95f, -11.90f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.06f, 0.34f, 0.52f), 0.13f);
     cuboid_boundaries[c] = new cuboid(
-        vec(7.15f, 1.2f, -12.3f), vec(7.65f, 3.8f, -11.8f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.4f, 2.5f, -12.05f), 0.0f);
+        vec(8.45f, 1.2f, -12.50f), vec(9.00f, 3.8f, -11.95f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.73f, 2.5f, -12.23f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.14f, 0.16f, 0.19f), 0.15f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.05f, 1.2f, -11.2f), vec(5.55f, 3.8f, -10.7f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(5.3f, 2.5f, -10.95f), 0.0f);
+        vec(6.90f, 1.2f, -11.25f), vec(7.45f, 3.7f, -10.75f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.18f, 2.45f, -11.00f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.38f, 0.40f, 0.45f), 0.10f);
     cuboid_boundaries[c] = new cuboid(
-        vec(4.9f, 0.95f, -10.75f), vec(7.75f, 1.3f, -10.35f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.32f, 1.1f, -10.55f), 0.0f);
+        vec(5.70f, 0.95f, -11.05f), vec(9.40f, 1.30f, -10.65f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.55f, 1.12f, -10.85f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.30f, 0.32f, 0.36f), 0.12f);
@@ -1039,20 +1048,20 @@ __global__ void create_extra_geometry(
     // Right-side matte machine components / crates.
     extra_materials[m] = new lambertian(vec(0.50f, 0.53f, 0.58f));
     cuboid_boundaries[c] = new cuboid(
-        vec(8.00f, 0.28f, -12.35f), vec(8.82f, 0.95f, -11.55f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.41f, 0.62f, -11.95f), 0.0f);
+        vec(7.55f, 0.28f, -12.55f), vec(8.65f, 1.05f, -11.70f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.10f, 0.66f, -12.12f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new lambertian(vec(0.47f, 0.50f, 0.55f));
     cuboid_boundaries[c] = new cuboid(
-        vec(7.88f, 1.10f, -15.25f), vec(8.82f, 1.82f, -14.30f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.35f, 1.46f, -14.78f), 0.0f);
+        vec(8.05f, 0.95f, -11.90f), vec(9.15f, 1.75f, -11.15f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.60f, 1.35f, -11.52f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new lambertian(vec(0.54f, 0.56f, 0.60f));
     cuboid_boundaries[c] = new cuboid(
-        vec(4.00f, 0.82f, -14.75f), vec(4.85f, 1.50f, -13.90f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(4.43f, 1.16f, -14.33f), 0.0f);
+        vec(4.35f, 0.75f, -13.55f), vec(5.55f, 1.45f, -12.75f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(4.95f, 1.10f, -13.15f), 0.0f);
     ++m; ++c;
 
     // Two small matte vertical architectural modules on the right wall.
@@ -1135,10 +1144,10 @@ __global__ void create_extra_geometry(
     // Four dielectric triangles form a larger tetrahedral crystal.  A small
     // separation between the silhouette features and the stronger colored
     // metal sculpture behind it keeps the four facets visually distinct.
-    const vec T(3.40f, 3.68f, -8.70f);
-    const vec L(2.15f, 1.08f, -7.30f);
-    const vec R(4.65f, 1.08f, -7.30f);
-    const vec Q(3.40f, 0.68f, -9.95f);
+    const vec T(4.20f, 3.68f, -8.85f);
+    const vec L(2.90f, 1.08f, -7.42f);
+    const vec R(5.50f, 1.08f, -7.42f);
+    const vec Q(4.20f, 0.68f, -10.10f);
 
     extra_materials[m] = new dielectric(1.47f);
     final_shapes[m] = new triangle(T, L, R, extra_materials[m]); ++m;
@@ -1154,16 +1163,16 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
     // Each visible triangle is now a genuine solid with front/back faces
     // and six connecting side faces. All bases sit directly on the right
-    // platform top at y = 2.35f.  The three solids are separated in X and
+    // platform top at y = 2.78f.  The three solids are separated in X and
     // slightly staggered in Z so their silhouettes remain distinct.
 
     // LEFT prism ------------------------------------------------------
-    const vec P0(5.05f, 2.35f, -7.30f);
-    const vec P1(6.05f, 2.35f, -7.30f);
-    const vec P2(5.55f, 4.05f, -7.30f);
-    const vec P3(5.05f, 2.35f, -7.68f);
-    const vec P4(6.05f, 2.35f, -7.68f);
-    const vec P5(5.55f, 4.05f, -7.68f);
+    const vec P0(5.95f, 2.78f, -7.95f);
+    const vec P1(6.95f, 2.78f, -7.95f);
+    const vec P2(6.45f, 4.46f, -7.95f);
+    const vec P3(5.95f, 2.78f, -7.62f);
+    const vec P4(6.95f, 2.78f, -7.62f);
+    const vec P5(6.45f, 4.46f, -7.62f);
 
     extra_materials[m] = new metal(
         vec(0.88f, 0.91f, 0.97f), 0.08f);
@@ -1172,12 +1181,12 @@ __global__ void create_extra_geometry(
     ++m;
 
     // CENTER prism ---------------------------------------------------
-    const vec M0(6.35f, 2.35f, -7.56f);
-    const vec M1(7.35f, 2.35f, -7.56f);
-    const vec M2(6.85f, 4.30f, -7.56f);
-    const vec M3(6.35f, 2.35f, -7.94f);
-    const vec M4(7.35f, 2.35f, -7.94f);
-    const vec M5(6.85f, 4.30f, -7.94f);
+    const vec M0(7.15f, 2.78f, -7.85f);
+    const vec M1(8.25f, 2.78f, -7.85f);
+    const vec M2(7.70f, 4.42f, -7.85f);
+    const vec M3(7.15f, 2.78f, -7.45f);
+    const vec M4(8.25f, 2.78f, -7.45f);
+    const vec M5(7.70f, 4.42f, -7.45f);
 
     extra_materials[m] = new metal(
         vec(0.85f, 0.89f, 0.96f), 0.095f);
@@ -1186,12 +1195,12 @@ __global__ void create_extra_geometry(
     ++m;
 
     // RIGHT prism ----------------------------------------------------
-    const vec N0(7.55f, 2.35f, -7.86f);
-    const vec N1(8.55f, 2.35f, -7.86f);
-    const vec N2(8.05f, 4.30f, -7.86f);
-    const vec N3(7.55f, 2.35f, -8.22f);
-    const vec N4(8.55f, 2.35f, -8.22f);
-    const vec N5(8.05f, 4.30f, -8.22f);
+    const vec N0(8.55f, 2.78f, -7.75f);
+    const vec N1(9.45f, 2.78f, -7.75f);
+    const vec N2(9.00f, 4.56f, -7.75f);
+    const vec N3(8.55f, 2.78f, -7.39f);
+    const vec N4(9.45f, 2.78f, -7.39f);
+    const vec N5(9.00f, 4.56f, -7.39f);
 
     extra_materials[m] = new metal(
         vec(0.82f, 0.87f, 0.94f), 0.11f);
@@ -1200,7 +1209,7 @@ __global__ void create_extra_geometry(
     ++m;
 
     // The constants above match the actual solids constructed here:
-    // 50 cuboids + 12 individual triangle faces + 3 triangular prisms = 65 solids.
+    // 66 cuboids + 12 individual triangle faces + 3 triangular prisms = 81 solids.
     if(m != NUM_EXTRA_SOLIDS || c != NUM_EXTRA_CUBOIDS){
         printf("Scene geometry count mismatch: materials/shapes=%d expected=%d, cuboids=%d expected=%d\n",
                m, NUM_EXTRA_SOLIDS, c, NUM_EXTRA_CUBOIDS);
@@ -1445,27 +1454,27 @@ int main(){
     // they provide grazing highlights and local illumination for the triangle
     // facets, the nearby machine, and the right-side matte props.
     add_light(
-        vec(5.40f, 2.46f, -7.45f),
-        0.11f,
-        vec(2.0f, 12.0f, 22.0f)
+        vec(6.05f, 2.92f, -7.78f),
+        0.14f,
+        vec(1.0f, 5.0f, 9.0f)
     );
 
     add_light(
-        vec(8.35f, 2.46f, -7.40f),
-        0.11f,
-        vec(2.0f, 15.0f, 26.0f)
+        vec(9.00f, 2.94f, -7.72f),
+        0.14f,
+        vec(1.0f, 5.5f, 10.0f)
     );
 
     add_light(
-        vec(6.95f, 4.72f, -8.38f),
-        0.10f,
-        vec(3.0f, 17.0f, 29.0f)
+        vec(7.55f, 4.55f, -8.12f),
+        0.12f,
+        vec(1.2f, 6.0f, 11.0f)
     );
 
     add_light(
-        vec(7.95f, 4.05f, -8.38f),
-        0.10f,
-        vec(2.0f, 13.0f, 23.0f)
+        vec(8.55f, 4.00f, -8.10f),
+        0.12f,
+        vec(1.2f, 6.0f, 11.0f)
     );
 
     // Exactly ten sampled spherical lights:
