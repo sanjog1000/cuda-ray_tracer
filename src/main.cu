@@ -442,13 +442,14 @@ __device__ vec ray_color(
                                     // Point was sampled uniformly by area from
                                     // the selected light, and the selected light
                                     // itself was chosen uniformly from N lights.
-                                    const float joint_area_pdf =
-                                        1.0f / (float(light_count) * light.area);
+                                    const float light_area = 4.0f * 3.14159265359f * light_radius * light_radius;
+
+                                    const float joint_area_pdf = 1.0f / (float(light_count) * light_area);
 
                                     vec direct_light =
-                                        brdf * light.emission *
+                                        brdf * light_emission *
                                         ((NdotL * light_costheta) /
-                                         (distance * distance * joint_area_pdf));
+                                        (distance * distance * joint_area_pdf));
 
                                     accumulated_light +=
                                         curr_attenuated * direct_light;
