@@ -17,8 +17,8 @@
 #include "triangle.h"
 #include "constant_medium.h"
 
-__constant__ float4 g_light_center_radius[MAX_SCENE_LIGHTS];
-__constant__ float4 g_light_emission[MAX_SCENE_LIGHTS];
+// __constant__ float4 g_light_center_radius[MAX_SCENE_LIGHTS];
+// __constant__ float4 g_light_emission[MAX_SCENE_LIGHTS];
 
 #define CUDA_CHECK(call)                                                        \
     do {                                                                        \

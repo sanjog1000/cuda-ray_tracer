@@ -16,8 +16,8 @@ struct scene_light{
     vec emission;
 };
 
-extern __constant__ float4 g_light_center_radius[MAX_SCENE_LIGHTS];
-extern __constant__ float4 g_light_emission[MAX_SCENE_LIGHTS];
+__constant__ float4 g_light_center_radius[MAX_SCENE_LIGHTS];
+__constant__ float4 g_light_emission[MAX_SCENE_LIGHTS];
 
 struct onb{
     vec axis[3];
