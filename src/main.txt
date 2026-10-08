@@ -130,17 +130,15 @@ public:
 
     __host__ __device__ virtual bool hit(const ray& r, float t_min, float t_max, hit_record& rec, curandState* local_state) const override {
         vec d = r.origin() - pivot;
-        // FIX: world -> local must use the inverse Z rotation R(-theta).
         vec local_o(
-            cos_theta*d.x() + sin_theta*d.y(),
-            -sin_theta*d.x() + cos_theta*d.y(),
+            cos_theta*d.x() - sin_theta*d.y(),
+            sin_theta*d.x() + cos_theta*d.y(),
             d.z()
         );
         vec dir = r.direction();
-        // FIX: same inverse rotation for the ray direction.
         vec local_d(
-            cos_theta*dir.x() + sin_theta*dir.y(),
-            -sin_theta*dir.x() + cos_theta*dir.y(),
+            cos_theta*dir.x() - sin_theta*dir.y(),
+            sin_theta*dir.x() + cos_theta*dir.y(),
             dir.z()
         );
 
@@ -149,15 +147,14 @@ public:
 
         vec p = rec.p - pivot;
         vec n = rec.normal;
-        // FIX: local -> world applies the requested +theta rotation.
         vec world_p(
-            cos_theta*p.x() - sin_theta*p.y(),
-            sin_theta*p.x() + cos_theta*p.y(),
+            cos_theta*p.x() + sin_theta*p.y(),
+            -sin_theta*p.x() + cos_theta*p.y(),
             p.z()
         );
         vec world_n(
-            cos_theta*n.x() - sin_theta*n.y(),
-            sin_theta*n.x() + cos_theta*n.y(),
+            cos_theta*n.x() + sin_theta*n.y(),
+            -sin_theta*n.x() + cos_theta*n.y(),
             n.z()
         );
 
@@ -314,9 +311,6 @@ __device__ vec ray_color(
     const ray& r,
     hittable** world,
     curandState* local_state,
-    const vec* light_centres,
-    const float* light_radii,
-    const vec* light_emissions,
     int light_count
 ){
     vec curr_attenuated(1.0f, 1.0f, 1.0f);
@@ -350,12 +344,7 @@ __device__ vec ray_color(
             if(rec.mat->uses_pdf_sampling()){
                 cosine_pdf cos_pdf(rec.normal);
 
-                multi_sphere_pdf lgt_pdf(
-                    rec.p,
-                    light_centres,
-                    light_radii,
-                    light_count
-                );
+                multi_sphere_pdf lgt_pdf(rec.p, light_count);
 
                 multi_mixture_pdf mix_pdf(cos_pdf, lgt_pdf);
 
@@ -399,9 +388,11 @@ __device__ vec ray_color(
                         light_index = light_count - 1;
                     }
 
-                    const vec light_centre = light_centres[light_index];
-                    const float light_radius = light_radii[light_index];
-                    const vec light_emission = light_emissions[light_index];
+                    const float4 light_cr = g_light_center_radius[light_index];
+                    const float4 light_em = g_light_emission[light_index];
+                    const vec light_centre(light_cr.x, light_cr.y, light_cr.z);
+                    const float light_radius = light_cr.w;
+                    const vec light_emission(light_em.x, light_em.y, light_em.z);
 
                     vec light_point = sample_light_point(
                         light_centre,
@@ -448,17 +439,14 @@ __device__ vec ray_color(
                                     // Point was sampled uniformly by area from
                                     // the selected light, and the selected light
                                     // itself was chosen uniformly from N lights.
-                                    float light_area =
-                                        4.0f * 3.14159265359f *
-                                        light_radius * light_radius;
+                                    const float light_area = 4.0f * 3.14159265359f * light_radius * light_radius;
 
-                                    float joint_area_pdf =
-                                        1.0f / (float(light_count) * light_area);
+                                    const float joint_area_pdf = 1.0f / (float(light_count) * light_area);
 
                                     vec direct_light =
                                         brdf * light_emission *
                                         ((NdotL * light_costheta) /
-                                         (distance * distance * joint_area_pdf));
+                                        (distance * distance * joint_area_pdf));
 
                                     accumulated_light +=
                                         curr_attenuated * direct_light;
@@ -484,7 +472,11 @@ __device__ vec ray_color(
                 )){
                     curr_attenuated *= attenuation;
                     curr_ray = scattered;
-                    add_emission = false;
+                    // Delta materials (glass) need to be allowed to see
+                    // emissive surfaces on the next bounce. Non-delta materials
+                    // already receive direct lighting via NEE, so suppress their
+                    // next-hit emission to avoid double counting.
+                    add_emission = rec.mat->is_delta();
                 }
                 else{
                     return accumulated_light;
@@ -515,9 +507,11 @@ __device__ vec ray_color(
             vec unit_direction = unit_vector(curr_ray.direction());
             float t = 0.5f * (unit_direction.y() + 1.0f);
 
+            // Enclosed atrium: do not feed a bright blue sky into the
+            // reflective floor. The reference scene has a dark interior fill.
             vec sky =
-                (1.0f - t) * vec(1.0f, 1.0f, 1.0f) +
-                t * vec(0.5f, 0.7f, 1.0f);
+                (1.0f - t) * vec(0.018f, 0.022f, 0.032f) +
+                t * vec(0.040f, 0.060f, 0.090f);
 
             accumulated_light += curr_attenuated * sky;
             return accumulated_light;
@@ -549,9 +543,6 @@ __global__ void render_kernel(
     camera cam,
     hittable** world,
     curandState* states,
-    const vec* light_centres,
-    const float* light_radii,
-    const vec* light_emissions,
     int light_count,
     int samples_this_batch
 ){
@@ -582,9 +573,6 @@ __global__ void render_kernel(
             r,
             world,
             &local_state,
-            light_centres,
-            light_radii,
-            light_emissions,
             light_count
         );
     }
@@ -633,7 +621,7 @@ __global__ void create_world(hittable** list , hittable** world , material** mat
     }
 
     // Original code built a flat hittable_list here, which is O(count) per
-    // ray -- fine for two spheres, very much not fine for a few hundred.
+    // ray -- fine for two spheres, very much not fine for a dozens of objects.
     // Build a BVH over the same objects instead (see bvh_node.h).
     curandState local_state;
     curand_init(1984ULL, 0, 0, &local_state);
@@ -658,8 +646,8 @@ __global__ void clear_world(hittable** list, material** materials, int count) {
 //
 // The final showcase scene is deliberately architectural: large cuboids and
 // explicit triangle assemblies carry the composition, while GGX metals, dielectric
-// glass, emissive neon surfaces, six low-density volumes, reflective flooring and
-// controlled depth-of-field demonstrate the renderer's full feature set.
+// glass, emissive neon surfaces, reflective flooring and GPU path tracing define the
+// showcase. Optional volumetrics remain in the codebase but are disabled for this render.
 // There is no random RTIOW sphere field; spheres are deliberate secondary props.
 // ---------------------------------------------------------------------
 #define NUM_EXTRA_CUBOIDS 66
@@ -673,7 +661,8 @@ __global__ void create_extra_geometry(
     hittable** cuboid_boundaries,
     material** extra_materials,
     hittable** final_shapes,
-    hittable** extra_top_list
+    hittable** extra_top_list,
+    bvh_node* extra_bvh_pool
 ){
     if(threadIdx.x != 0 || blockIdx.x != 0) return;
 
@@ -685,7 +674,7 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
 
     // 1. Reflective floor.
-    extra_materials[m] = new metal(vec(0.48f, 0.51f, 0.58f), 0.13f);
+    extra_materials[m] = new metal(vec(0.40f, 0.43f, 0.49f), 0.075f);
     cuboid_boundaries[c] = new cuboid(
         vec(-10.0f, 0.0f, -20.0f), vec(10.0f, 0.22f, 2.0f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 0.0f, 0.0f), 0.0f);
@@ -764,10 +753,12 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-7.15f, 2.5f, -10.0f), 0.0f);
     ++m; ++c;
 
+    // Right display shelf: a thin, long slab positioned behind the hero
+    // assembly, matching the reference's broad horizontal display ledge.
     extra_materials[m] = new metal(vec(0.24f, 0.27f, 0.30f), 0.28f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.3f, 2.05f, -13.0f), vec(9.0f, 2.35f, -7.0f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.15f, 2.2f, -10.0f), 0.0f);
+        vec(5.55f, 2.48f, -8.75f), vec(9.50f, 2.78f, -7.25f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.525f, 2.63f, -8.00f), 0.0f);
     ++m; ++c;
 
     // 15-19. Five-step staircase on the left, deliberately geometric rather
@@ -817,15 +808,15 @@ __global__ void create_extra_geometry(
     }
 
     // Two repeated vertical supports below the catwalks.
-    const float support_x[2] = { -7.2f, 7.2f };
+    const float support_x[2] = { -7.2f, 9.05f };
     for(int i = 0; i < 2; ++i){
         extra_materials[m] = new metal(vec(0.16f, 0.18f, 0.22f), 0.22f);
         float x = support_x[i];
         cuboid_boundaries[c] = new cuboid(
-            vec(x-0.22f, 0.0f, -10.8f),
-            vec(x+0.22f, 2.30f, -10.38f),
+            vec(x-0.18f, 0.0f, -8.20f),
+            vec(x+0.18f, 2.48f, -7.55f),
             extra_materials[m]);
-        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(x, 1.15f, -10.59f), 0.0f);
+        final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(x, 1.24f, -7.88f), 0.0f);
         ++m; ++c;
     }
 
@@ -926,58 +917,80 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-2.75f, 0.96f, -8.05f), 28.0f);
     ++m; ++c;
 
-    // 34-35. Low foreground plates.
-    // The left plate is kept unchanged. The right plate is deliberately made
-    // into a thin, flat diagonal beam so it meets the foreground platform
-    // cleanly instead of producing the previous overlapping/floating faces.
-    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.25f);
-    cuboid_boundaries[c] = new cuboid(
-        vec(-6.2f, 0.72f, -9.2f), vec(-3.9f, 1.05f, -7.6f), extra_materials[m]);
-    final_shapes[m] = new rotate_z(cuboid_boundaries[c], vec(-6.2f, 0.72f, -9.2f), -18.0f);
+    // 34-35. Foreground diagonal V-braces.
+    // These are reconstructed from the reference image in camera space.
+    // With the final camera below, the projected right brace is approximately
+    // 23 degrees downward to the right and the left brace approximately 24
+    // degrees upward to the right.  Their world-space yaw values therefore
+    // differ from their apparent image-space slopes.
+
+    // LEFT foreground brace: approximately (-9.45,-8.41) -> (-4.08,-0.64)
+    // in world X-Z at top surface y ~= 0.50.
+    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.16f);
+    {
+        const float L = 9.44f;
+        const float W = 0.34f;
+        const float ang = 55.3f;
+        const vec center(-6.76f, 0.37f, -4.53f);
+        cuboid_boundaries[c] = new cuboid(
+            vec(-L*0.5f, 0.22f, -W*0.5f),
+            vec( L*0.5f, 0.50f,  W*0.5f),
+            extra_materials[m]);
+        final_shapes[m] = new rotate_y(cuboid_boundaries[c], center, ang);
+    }
     ++m; ++c;
 
-    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.22f);
-    cuboid_boundaries[c] = new cuboid(
-        vec(4.35f, 0.72f, -8.15f), vec(7.10f, 0.96f, -7.78f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(
-        cuboid_boundaries[c], vec(5.725f, 0.84f, -7.965f), 12.0f);
+    // RIGHT foreground brace: approximately (3.50,-11.77) -> (6.45,-7.63)
+    // in world X-Z at top surface y ~= 0.50.
+    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.16f);
+    {
+        const float L = 5.09f;
+        const float W = 0.34f;
+        const float ang = 54.6f;
+        const vec center(4.97f, 0.37f, -9.70f);
+        cuboid_boundaries[c] = new cuboid(
+            vec(-L*0.5f, 0.22f, -W*0.5f),
+            vec( L*0.5f, 0.50f,  W*0.5f),
+            extra_materials[m]);
+        final_shapes[m] = new rotate_y(cuboid_boundaries[c], center, ang);
+    }
     ++m; ++c;
 
     // 36-42. A compact industrial machine housing on the right side.
     extra_materials[m] = new metal(vec(0.10f, 0.12f, 0.15f), 0.18f);
     cuboid_boundaries[c] = new cuboid(
-        vec(4.9f, 0.25f, -12.7f), vec(7.7f, 1.25f, -10.6f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.3f, 0.75f, -11.65f), 0.0f);
+        vec(5.65f, 0.25f, -13.25f), vec(9.55f, 1.35f, -11.45f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.60f, 0.80f, -12.35f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.20f, 0.22f, 0.26f), 0.12f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.25f, 1.25f, -12.35f), vec(5.7f, 4.1f, -11.8f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(5.48f, 2.7f, -12.1f), 0.0f);
+        vec(6.15f, 1.25f, -12.90f), vec(6.65f, 3.95f, -12.35f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.40f, 2.60f, -12.63f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.58f, 0.18f, 0.08f), 0.14f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.0f, 3.8f, -12.55f), vec(7.7f, 4.2f, -11.0f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.35f, 4.0f, -11.8f), 0.0f);
+        vec(5.70f, 3.75f, -12.65f), vec(9.25f, 4.15f, -11.15f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.48f, 3.95f, -11.90f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.06f, 0.34f, 0.52f), 0.13f);
     cuboid_boundaries[c] = new cuboid(
-        vec(7.15f, 1.2f, -12.3f), vec(7.65f, 3.8f, -11.8f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.4f, 2.5f, -12.05f), 0.0f);
+        vec(8.45f, 1.2f, -12.50f), vec(9.00f, 3.8f, -11.95f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.73f, 2.5f, -12.23f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.14f, 0.16f, 0.19f), 0.15f);
     cuboid_boundaries[c] = new cuboid(
-        vec(5.05f, 1.2f, -11.2f), vec(5.55f, 3.8f, -10.7f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(5.3f, 2.5f, -10.95f), 0.0f);
+        vec(6.90f, 1.2f, -11.25f), vec(7.45f, 3.7f, -10.75f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.18f, 2.45f, -11.00f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.38f, 0.40f, 0.45f), 0.10f);
     cuboid_boundaries[c] = new cuboid(
-        vec(4.9f, 0.95f, -10.75f), vec(7.75f, 1.3f, -10.35f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(6.32f, 1.1f, -10.55f), 0.0f);
+        vec(5.70f, 0.95f, -11.05f), vec(9.40f, 1.30f, -10.65f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(7.55f, 1.12f, -10.85f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new metal(vec(0.30f, 0.32f, 0.36f), 0.12f);
@@ -1035,20 +1048,20 @@ __global__ void create_extra_geometry(
     // Right-side matte machine components / crates.
     extra_materials[m] = new lambertian(vec(0.50f, 0.53f, 0.58f));
     cuboid_boundaries[c] = new cuboid(
-        vec(8.00f, 0.28f, -12.35f), vec(8.82f, 0.95f, -11.55f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.41f, 0.62f, -11.95f), 0.0f);
+        vec(7.55f, 0.28f, -12.55f), vec(8.65f, 1.05f, -11.70f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.10f, 0.66f, -12.12f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new lambertian(vec(0.47f, 0.50f, 0.55f));
     cuboid_boundaries[c] = new cuboid(
-        vec(7.88f, 1.10f, -15.25f), vec(8.82f, 1.82f, -14.30f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.35f, 1.46f, -14.78f), 0.0f);
+        vec(8.05f, 0.95f, -11.90f), vec(9.15f, 1.75f, -11.15f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.60f, 1.35f, -11.52f), 0.0f);
     ++m; ++c;
 
     extra_materials[m] = new lambertian(vec(0.54f, 0.56f, 0.60f));
     cuboid_boundaries[c] = new cuboid(
-        vec(4.00f, 0.82f, -14.75f), vec(4.85f, 1.50f, -13.90f), extra_materials[m]);
-    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(4.43f, 1.16f, -14.33f), 0.0f);
+        vec(4.35f, 0.75f, -13.55f), vec(5.55f, 1.45f, -12.75f), extra_materials[m]);
+    final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(4.95f, 1.10f, -13.15f), 0.0f);
     ++m; ++c;
 
     // Two small matte vertical architectural modules on the right wall.
@@ -1131,10 +1144,10 @@ __global__ void create_extra_geometry(
     // Four dielectric triangles form a larger tetrahedral crystal.  A small
     // separation between the silhouette features and the stronger colored
     // metal sculpture behind it keeps the four facets visually distinct.
-    const vec T(3.40f, 3.68f, -8.70f);
-    const vec L(2.15f, 1.08f, -7.30f);
-    const vec R(4.65f, 1.08f, -7.30f);
-    const vec Q(3.40f, 0.68f, -9.95f);
+    const vec T(4.20f, 3.68f, -8.85f);
+    const vec L(2.90f, 1.08f, -7.42f);
+    const vec R(5.50f, 1.08f, -7.42f);
+    const vec Q(4.20f, 0.68f, -10.10f);
 
     extra_materials[m] = new dielectric(1.47f);
     final_shapes[m] = new triangle(T, L, R, extra_materials[m]); ++m;
@@ -1150,16 +1163,16 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
     // Each visible triangle is now a genuine solid with front/back faces
     // and six connecting side faces. All bases sit directly on the right
-    // platform top at y = 2.35f.  The three solids are separated in X and
+    // platform top at y = 2.78f.  The three solids are separated in X and
     // slightly staggered in Z so their silhouettes remain distinct.
 
     // LEFT prism ------------------------------------------------------
-    const vec P0(5.35f, 2.35f, -7.35f);
-    const vec P1(6.35f, 2.35f, -7.35f);
-    const vec P2(5.85f, 4.05f, -7.35f);
-    const vec P3(5.35f, 2.35f, -7.70f);
-    const vec P4(6.35f, 2.35f, -7.70f);
-    const vec P5(5.85f, 4.05f, -7.70f);
+    const vec P0(5.95f, 2.78f, -7.95f);
+    const vec P1(6.95f, 2.78f, -7.95f);
+    const vec P2(6.45f, 4.46f, -7.95f);
+    const vec P3(5.95f, 2.78f, -7.62f);
+    const vec P4(6.95f, 2.78f, -7.62f);
+    const vec P5(6.45f, 4.46f, -7.62f);
 
     extra_materials[m] = new metal(
         vec(0.88f, 0.91f, 0.97f), 0.08f);
@@ -1168,12 +1181,12 @@ __global__ void create_extra_geometry(
     ++m;
 
     // CENTER prism ---------------------------------------------------
-    const vec M0(6.55f, 2.35f, -7.55f);
-    const vec M1(7.55f, 2.35f, -7.55f);
-    const vec M2(7.05f, 4.30f, -7.55f);
-    const vec M3(6.55f, 2.35f, -7.90f);
-    const vec M4(7.55f, 2.35f, -7.90f);
-    const vec M5(7.05f, 4.30f, -7.90f);
+    const vec M0(7.15f, 2.78f, -7.85f);
+    const vec M1(8.25f, 2.78f, -7.85f);
+    const vec M2(7.70f, 4.42f, -7.85f);
+    const vec M3(7.15f, 2.78f, -7.45f);
+    const vec M4(8.25f, 2.78f, -7.45f);
+    const vec M5(7.70f, 4.42f, -7.45f);
 
     extra_materials[m] = new metal(
         vec(0.85f, 0.89f, 0.96f), 0.095f);
@@ -1182,12 +1195,14 @@ __global__ void create_extra_geometry(
     ++m;
 
     // RIGHT prism ----------------------------------------------------
-    const vec N0(7.75f, 2.35f, -7.80f);
-    const vec N1(8.75f, 2.35f, -7.80f);
-    const vec N2(8.25f, 4.30f, -7.80f);
-    const vec N3(7.75f, 2.35f, -8.15f);
-    const vec N4(8.75f, 2.35f, -8.15f);
-    const vec N5(8.25f, 4.30f, -8.15f);
+    // Shift the rightmost prism left so the full silhouette clears the
+    // right wall/panel while preserving its height and stagger.
+    const vec N0(7.75f, 2.78f, -7.90f);
+    const vec N1(8.65f, 2.78f, -7.90f);
+    const vec N2(8.20f, 4.56f, -7.90f);
+    const vec N3(7.75f, 2.78f, -7.54f);
+    const vec N4(8.65f, 2.78f, -7.54f);
+    const vec N5(8.20f, 4.56f, -7.54f);
 
     extra_materials[m] = new metal(
         vec(0.82f, 0.87f, 0.94f), 0.11f);
@@ -1203,14 +1218,26 @@ __global__ void create_extra_geometry(
         return;
     }
 
-    // Sphere BVH is one entry in the outer list; all architectural shapes
-    // remain directly accessible as a small flat additive layer for now.
+    // Build one BVH over the entire base scene: the existing sphere BVH is
+    // treated as one leaf while all architectural solids become the other
+    // leaves. This removes the previous O(65) flat traversal from every path
+    // and shadow ray.
     extra_top_list[0] = *sphere_world;
     for(int i = 0; i < NUM_EXTRA_SOLIDS; ++i){
         extra_top_list[i+1] = final_shapes[i];
     }
 
-    *extra_world = new hittable_list(extra_top_list, NUM_EXTRA_SOLIDS + 1);
+    curandState bvh_state;
+    curand_init(3151ULL, 0, 0, &bvh_state);
+    int pool_index = 0;
+    *extra_world = build_bvh(
+        extra_top_list,
+        0,
+        NUM_EXTRA_SOLIDS + 1,
+        &bvh_state,
+        extra_bvh_pool,
+        &pool_index
+    );
 }
 
 __global__ void clear_extra_geometry(
@@ -1226,14 +1253,13 @@ __global__ void clear_extra_geometry(
         delete extra_materials[i];
     }
 
+    // BVH internal nodes live in extra_bvh_pool and are released with cudaFree.
     // Every cuboid is owned separately by its rotate_* wrapper, so the raw
     // cuboids must be deleted after the wrappers. Each triangular_prism owns
     // its eight internal triangle faces and frees those faces in its destructor.
     for(int i = 0; i < NUM_EXTRA_CUBOIDS; ++i){
         delete cuboid_boundaries[i];
     }
-
-    delete *extra_world;
 }
 
 // ---------------------------------------------------------------------
@@ -1241,6 +1267,7 @@ __global__ void clear_extra_geometry(
 // geometry so the scene has atmosphere without becoming a white fog image.
 // ---------------------------------------------------------------------
 #define NUM_FOG_VOLUMES 6
+#define ENABLE_VOLUMETRICS 0  // 0 = clean/faster showcase; 1 = volumetric showcase
 
 __global__ void create_volumetrics(
     hittable** in_world,
@@ -1249,6 +1276,7 @@ __global__ void create_volumetrics(
     material** fog_materials,
     hittable** fog_media,
     hittable** top_list,
+    bvh_node* final_bvh_pool,
     vec hero0, vec hero1, vec hero2
 ){
     if(threadIdx.x != 0 || blockIdx.x != 0) return;
@@ -1259,46 +1287,58 @@ __global__ void create_volumetrics(
     fog_boundaries[idx] = new cuboid(
         vec(-9.2f, 0.05f, -18.5f), vec(9.2f, 0.70f, -2.0f), nullptr);
     fog_materials[idx] = new isotropic(vec(0.88f, 0.90f, 0.94f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0025f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.008f, fog_materials[idx]);
     ++idx;
 
     // 2. Mist around the glass prism.
     fog_boundaries[idx] = new sphere(hero0, 2.20f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.95f, 0.84f, 0.78f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0005f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.001f, fog_materials[idx]);
     ++idx;
 
     // 3. Mist around the central chrome hero.
     fog_boundaries[idx] = new sphere(hero1, 2.0f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.90f, 0.92f, 0.96f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0005f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.001f, fog_materials[idx]);
     ++idx;
 
     // 4. Mist around the transparent crystal.
     fog_boundaries[idx] = new sphere(hero2, 2.35f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.78f, 0.89f, 1.00f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0005f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.001f, fog_materials[idx]);
     ++idx;
 
     // 5. Haze against the back wall for visible depth / light shafts.
     fog_boundaries[idx] = new cuboid(
         vec(-8.6f, 1.0f, -18.8f), vec(8.6f, 6.8f, -17.0f), nullptr);
     fog_materials[idx] = new isotropic(vec(0.84f, 0.88f, 0.94f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0020f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.006f, fog_materials[idx]);
     ++idx;
 
     // 6. Soft haze around the main overhead light.
     fog_boundaries[idx] = new sphere(vec(0.0f, 6.65f, -9.15f), 1.70f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.86f, 0.90f, 0.96f));
-    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.0020f, fog_materials[idx]);
+    fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.006f, fog_materials[idx]);
     ++idx;
 
+    // BVH over the base scene plus the six volume regions. This also prevents
+    // every ray from linearly testing all volume boundaries.
     top_list[0] = *in_world;
     for(int i = 0; i < idx; ++i){
         top_list[i+1] = fog_media[i];
     }
 
-    *out_world = new hittable_list(top_list, idx + 1);
+    curandState bvh_state;
+    curand_init(6027ULL, 0, 0, &bvh_state);
+    int pool_index = 0;
+    *out_world = build_bvh(
+        top_list,
+        0,
+        idx + 1,
+        &bvh_state,
+        final_bvh_pool,
+        &pool_index
+    );
 }
 
 __global__ void clear_volumetrics(
@@ -1314,8 +1354,7 @@ __global__ void clear_volumetrics(
         delete fog_materials[i];
         delete fog_boundaries[i];
     }
-
-    delete *out_world;
+    // BVH nodes live in final_bvh_pool and are released with cudaFree.
 }
 
 int main(){
@@ -1347,12 +1386,10 @@ int main(){
     // illumination so the scene does not depend on making the key enormous.
     const vec central_light_centre(0.0f, 6.65f, -9.15f);
     const float central_light_radius = 0.78f;
-    const vec central_light_emission(30.0f, 26.0f, 22.0f);
+    const vec central_light_emission(50.0f, 45.0f, 41.0f);
 
     std::vector<sphereDesc> h_scene;
-    std::vector<vec> h_light_centres;
-    std::vector<float> h_light_radii;
-    std::vector<vec> h_light_emissions;
+    std::vector<scene_light> h_lights;
 
     auto add_light = [&](const vec& centre, float radius, const vec& emission){
         h_scene.push_back({
@@ -1363,9 +1400,12 @@ int main(){
             0.0f
         });
 
-        h_light_centres.push_back(centre);
-        h_light_radii.push_back(radius);
-        h_light_emissions.push_back(emission);
+        h_lights.push_back({
+            centre,
+            radius,
+            4.0f * 3.14159265359f * radius * radius,
+            emission
+        });
     };
 
     // -----------------------------------------------------------------
@@ -1391,7 +1431,7 @@ int main(){
         -4.8f, -5.8f, -6.8f, -7.8f, -8.8f
     };
 
-    const vec stair_light_emission(26.0f, 11.0f, 3.0f);
+    const vec stair_light_emission(30.0f, 13.5f, 3.8f);
     const float stair_light_radius = 0.10f;
 
     for(int i = 0; i < 5; ++i){
@@ -1416,35 +1456,50 @@ int main(){
     // they provide grazing highlights and local illumination for the triangle
     // facets, the nearby machine, and the right-side matte props.
     add_light(
-        // Keep the emitter just in front of the left prism instead of
-        // embedding it inside the opaque solid.
-        vec(5.05f, 2.70f, -7.05f),
-        0.11f,
-        vec(2.0f, 12.0f, 22.0f)
+        vec(6.05f, 2.92f, -7.78f),
+        0.14f,
+        vec(1.8f, 8.5f, 14.0f)
     );
 
     add_light(
-        // Same idea for the right prism: sample from camera-facing space.
-        vec(8.95f, 2.70f, -7.05f),
-        0.11f,
-        vec(2.0f, 15.0f, 26.0f)
+        vec(9.00f, 2.94f, -7.72f),
+        0.14f,
+        vec(1.8f, 9.0f, 15.0f)
     );
 
     add_light(
-        vec(6.95f, 4.72f, -8.38f),
-        0.10f,
-        vec(3.0f, 17.0f, 29.0f)
+        vec(7.55f, 4.55f, -8.12f),
+        0.12f,
+        vec(1.8f, 9.0f, 15.0f)
     );
 
-    add_light(
-        vec(7.95f, 4.05f, -8.38f),
-        0.10f,
-        vec(2.0f, 13.0f, 23.0f)
-    );
+    // The upper-left right-cluster light remains a sampled light, but it is
+    // not a visible sphere: the reference has no emitter sitting on a triangle
+    // apex. Keeping it in the sampler preserves the desired local illumination.
+    h_lights.push_back({
+        vec(6.60f, 4.55f, -8.00f),
+        0.12f,
+        4.0f * 3.14159265359f * 0.12f * 0.12f,
+        vec(1.8f, 9.0f, 15.0f)
+    });
 
-    // Exactly ten sampled spherical lights:
-    //   1 central key + 5 stair lights + 4 right-side lights.
-    const int light_count = static_cast<int>(h_light_centres.size());
+    // Broad camera-facing fill: illumination only, never a visible sphere.
+    // This restores the brighter front-floor/facade balance of the reference
+    // without changing the scene composition.
+    h_lights.push_back({
+        vec(4.20f, 4.60f, 2.40f),
+        1.80f,
+        4.0f * 3.14159265359f * 1.80f * 1.80f,
+        vec(5.5f, 5.5f, 5.2f)
+    });
+
+    // 1 central key + 5 stair lights + 3 visible right-side lights + 2
+    // illumination-only sampled lights.
+    const int light_count = static_cast<int>(h_lights.size());
+    if(light_count > MAX_SCENE_LIGHTS){
+        std::cerr << "Too many scene lights for constant-memory table." << std::endl;
+        return 1;
+    }
 
     // -----------------------------------------------------------------
     // DELIBERATE SPHERICAL PROPS
@@ -1655,50 +1710,61 @@ int main(){
     int node_pool_count =
         object_count > 1 ? 2 * object_count - 1 : 1;
 
+    // Separate pools keep the prebuilt BVHs independently addressable.
+    bvh_node* d_extra_bvh_pool;
+    const int extra_bvh_node_count =
+        2 * (NUM_EXTRA_SOLIDS + 1) - 1;
+
+    bvh_node* d_final_bvh_pool;
+    const int final_bvh_node_count =
+        2 * (NUM_FOG_VOLUMES + 1) - 1;
+
     CUDA_CHECK(cudaMalloc(
         (void**)&d_node_pool,
         node_pool_count * sizeof(bvh_node)
     ));
 
-    // Multi-light arrays consumed by ray_color() and pdf.h.
-    vec* d_light_centres;
-    float* d_light_radii;
-    vec* d_light_emissions;
-
     CUDA_CHECK(cudaMalloc(
-        (void**)&d_light_centres,
-        light_count * sizeof(vec)
+        (void**)&d_extra_bvh_pool,
+        extra_bvh_node_count * sizeof(bvh_node)
     ));
 
     CUDA_CHECK(cudaMalloc(
-        (void**)&d_light_radii,
-        light_count * sizeof(float)
+        (void**)&d_final_bvh_pool,
+        final_bvh_node_count * sizeof(bvh_node)
     ));
 
-    CUDA_CHECK(cudaMalloc(
-        (void**)&d_light_emissions,
-        light_count * sizeof(vec)
+    // Upload the small light table once. Built-in float4 records are trivially
+    // constructible, so CUDA can place them directly in constant memory.
+    std::vector<float4> h_light_center_radius(light_count);
+    std::vector<float4> h_light_emission(light_count);
+
+    for(int i = 0; i < light_count; ++i){
+        h_light_center_radius[i] = make_float4(
+            h_lights[i].centre.x(),
+            h_lights[i].centre.y(),
+            h_lights[i].centre.z(),
+            h_lights[i].radius
+        );
+
+        h_light_emission[i] = make_float4(
+            h_lights[i].emission.x(),
+            h_lights[i].emission.y(),
+            h_lights[i].emission.z(),
+            0.0f
+        );
+    }
+
+    CUDA_CHECK(cudaMemcpyToSymbol(
+        g_light_center_radius,
+        h_light_center_radius.data(),
+        light_count * sizeof(float4)
     ));
 
-    CUDA_CHECK(cudaMemcpy(
-        d_light_centres,
-        h_light_centres.data(),
-        light_count * sizeof(vec),
-        cudaMemcpyHostToDevice
-    ));
-
-    CUDA_CHECK(cudaMemcpy(
-        d_light_radii,
-        h_light_radii.data(),
-        light_count * sizeof(float),
-        cudaMemcpyHostToDevice
-    ));
-
-    CUDA_CHECK(cudaMemcpy(
-        d_light_emissions,
-        h_light_emissions.data(),
-        light_count * sizeof(vec),
-        cudaMemcpyHostToDevice
+    CUDA_CHECK(cudaMemcpyToSymbol(
+        g_light_emission,
+        h_light_emission.data(),
+        light_count * sizeof(float4)
     ));
 
     // Extra architectural layer.
@@ -1789,7 +1855,8 @@ int main(){
         d_cuboid_boundaries,
         d_extra_materials,
         d_final_shapes,
-        d_extra_top_list
+        d_extra_top_list,
+        d_extra_bvh_pool
     );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -1799,6 +1866,7 @@ int main(){
     const vec hero1( 0.00f, 1.80f, -8.85f);
     const vec hero2( 3.40f, 1.63f, -8.31f);
 
+#if ENABLE_VOLUMETRICS
     create_volumetrics<<<1,1>>>(
         d_extra_world,
         d_final_world,
@@ -1806,12 +1874,23 @@ int main(){
         d_fog_materials,
         d_fog_media,
         d_top_list,
+        d_final_bvh_pool,
         hero0,
         hero1,
         hero2
     );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
+#else
+    // No volumetric pass in the clean showcase. Reuse the already built
+    // surface/base-scene BVH without another traversal layer.
+    CUDA_CHECK(cudaMemcpy(
+        d_final_world,
+        d_extra_world,
+        sizeof(hittable*),
+        cudaMemcpyDeviceToDevice
+    ));
+#endif
 
     // -----------------------------------------------------------------
     // RENDER
@@ -1824,14 +1903,19 @@ int main(){
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Showcase render: the scene contains glossy paths and several participating media volumes, so 64 spp is visibly under-sampled.
-    const int samples_per_pixel = 256;
-    const int samples_per_batch = 8;
+    // Cheap validation render. Increase this only after composition is approved.
+    const int samples_per_pixel = 64;
+    const int samples_per_batch = samples_per_pixel;
     const int num_batches =
         (samples_per_pixel + samples_per_batch - 1) /
         samples_per_batch;
 
     CUDA_CHECK(cudaMemset(d_fb, 0, fb_size));
+
+    cudaEvent_t render_start, render_stop;
+    CUDA_CHECK(cudaEventCreate(&render_start));
+    CUDA_CHECK(cudaEventCreate(&render_stop));
+    CUDA_CHECK(cudaEventRecord(render_start));
 
     for(int batch = 0; batch < num_batches; ++batch){
         int this_batch = std::min(
@@ -1846,9 +1930,6 @@ int main(){
             cam,
             d_final_world,
             d_states,
-            d_light_centres,
-            d_light_radii,
-            d_light_emissions,
             light_count,
             this_batch
         );
@@ -1863,6 +1944,16 @@ int main(){
                   << std::endl;
     }
 
+    CUDA_CHECK(cudaEventRecord(render_stop));
+    CUDA_CHECK(cudaEventSynchronize(render_stop));
+    float render_ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&render_ms, render_start, render_stop));
+    CUDA_CHECK(cudaEventDestroy(render_start));
+    CUDA_CHECK(cudaEventDestroy(render_stop));
+
+    std::cout << "GPU render time: " << render_ms << " ms ("
+              << (render_ms / 1000.0f) << " s)" << std::endl;
+
     CUDA_CHECK(cudaMemcpy(
         h_fb,
         d_fb,
@@ -1873,45 +1964,41 @@ int main(){
     // -----------------------------------------------------------------
     // OUTPUT
     // -----------------------------------------------------------------
-    std::ofstream file("image.ppm");
-    file << "P3\n"
+    // Binary PPM avoids millions of formatted integer writes; image quality
+    // is identical to the previous P3 output.
+    std::ofstream file("image.ppm", std::ios::binary);
+    file << "P6\n"
          << image_width << " " << image_height << "\n"
          << "255\n";
 
+    std::vector<unsigned char> pixels(total_pixels * 3);
     for(int j = image_height - 1; j >= 0; --j){
         for(int i = 0; i < image_width; ++i){
             int pixel_index = j * image_width + i;
             vec pixel_color = h_fb[pixel_index];
 
-            float r_ =
-                de_nan(pixel_color.x()) /
-                float(samples_per_pixel);
-
-            float g_ =
-                de_nan(pixel_color.y()) /
-                float(samples_per_pixel);
-
-            float b_ =
-                de_nan(pixel_color.z()) /
-                float(samples_per_pixel);
+            float r_ = de_nan(pixel_color.x()) / float(samples_per_pixel);
+            float g_ = de_nan(pixel_color.y()) / float(samples_per_pixel);
+            float b_ = de_nan(pixel_color.z()) / float(samples_per_pixel);
 
             r_ = sqrtf(clamp01(r_));
             g_ = sqrtf(clamp01(g_));
             b_ = sqrtf(clamp01(b_));
 
-            int ir = static_cast<int>(255.999f * r_);
-            int ig = static_cast<int>(255.999f * g_);
-            int ib = static_cast<int>(255.999f * b_);
-
-            file << ir << " " << ig << " " << ib << "\n";
+            const int output_row = image_height - 1 - j;
+            size_t out_idx = (size_t(output_row) * size_t(image_width) + size_t(i)) * 3;
+            pixels[out_idx + 0] = static_cast<unsigned char>(255.999f * r_);
+            pixels[out_idx + 1] = static_cast<unsigned char>(255.999f * g_);
+            pixels[out_idx + 2] = static_cast<unsigned char>(255.999f * b_);
         }
     }
-
+    file.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
     file.close();
 
     // -----------------------------------------------------------------
     // CLEANUP
     // -----------------------------------------------------------------
+#if ENABLE_VOLUMETRICS
     clear_volumetrics<<<1,1>>>(
         d_final_world,
         d_fog_boundaries,
@@ -1920,6 +2007,7 @@ int main(){
     );
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
+#endif
 
     clear_extra_geometry<<<1,1>>>(
         d_extra_world,
@@ -1945,10 +2033,8 @@ int main(){
     cudaFree(d_materials);
     cudaFree(d_descs);
     cudaFree(d_node_pool);
-
-    cudaFree(d_light_centres);
-    cudaFree(d_light_radii);
-    cudaFree(d_light_emissions);
+    cudaFree(d_extra_bvh_pool);
+    cudaFree(d_final_bvh_pool);
 
     cudaFree(d_extra_world);
     cudaFree(d_cuboid_boundaries);
