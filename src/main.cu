@@ -17,7 +17,8 @@
 #include "triangle.h"
 #include "constant_medium.h"
 
-__constant__ scene_light g_scene_lights[MAX_SCENE_LIGHTS];
+__constant__ float4 g_light_center_radius[MAX_SCENE_LIGHTS];
+__constant__ float4 g_light_emission[MAX_SCENE_LIGHTS];
 
 #define CUDA_CHECK(call)                                                        \
     do {                                                                        \
@@ -390,11 +391,15 @@ __device__ vec ray_color(
                         light_index = light_count - 1;
                     }
 
-                    const scene_light light = g_scene_lights[light_index];
+                    const float4 light_cr = g_light_center_radius[light_index];
+                    const float4 light_em = g_light_emission[light_index];
+                    const vec light_centre(light_cr.x, light_cr.y, light_cr.z);
+                    const float light_radius = light_cr.w;
+                    const vec light_emission(light_em.x, light_em.y, light_em.z);
 
                     vec light_point = sample_light_point(
-                        light.centre,
-                        light.radius,
+                        light_centre,
+                        light_radius,
                         local_state
                     );
 
@@ -410,7 +415,7 @@ __device__ vec ray_color(
 
                         if(NdotL > 0.0f){
                             vec light_normal = unit_vector(
-                                light_point - light.centre
+                                light_point - light_centre
                             );
 
                             float light_costheta = fmaxf(
@@ -1703,12 +1708,37 @@ int main(){
         final_bvh_node_count * sizeof(bvh_node)
     ));
 
-    // Upload the small light table once. It stays resident in constant memory
-    // for the complete render.
+    // Upload the small light table once. Built-in float4 records are trivially
+    // constructible, so CUDA can place them directly in constant memory.
+    std::vector<float4> h_light_center_radius(light_count);
+    std::vector<float4> h_light_emission(light_count);
+
+    for(int i = 0; i < light_count; ++i){
+        h_light_center_radius[i] = make_float4(
+            h_lights[i].centre.x(),
+            h_lights[i].centre.y(),
+            h_lights[i].centre.z(),
+            h_lights[i].radius
+        );
+
+        h_light_emission[i] = make_float4(
+            h_lights[i].emission.x(),
+            h_lights[i].emission.y(),
+            h_lights[i].emission.z(),
+            0.0f
+        );
+    }
+
     CUDA_CHECK(cudaMemcpyToSymbol(
-        g_scene_lights,
-        h_lights.data(),
-        light_count * sizeof(scene_light)
+        g_light_center_radius,
+        h_light_center_radius.data(),
+        light_count * sizeof(float4)
+    ));
+
+    CUDA_CHECK(cudaMemcpyToSymbol(
+        g_light_emission,
+        h_light_emission.data(),
+        light_count * sizeof(float4)
     ));
 
     // Extra architectural layer.

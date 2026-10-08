@@ -7,7 +7,8 @@
 #define PI 3.14159265359f
 #define MAX_SCENE_LIGHTS 16
 
-// Small, read-only scene-light table. 
+// Small, read-only scene-light table. All threads repeatedly inspect this
+// table during PDF evaluation, making it a good constant-memory candidate.
 struct scene_light{
     vec centre;
     float radius;
@@ -15,7 +16,8 @@ struct scene_light{
     vec emission;
 };
 
-extern __constant__ scene_light g_scene_lights[MAX_SCENE_LIGHTS];
+extern __constant__ float4 g_light_center_radius[MAX_SCENE_LIGHTS];
+extern __constant__ float4 g_light_emission[MAX_SCENE_LIGHTS];
 
 struct onb{
     vec axis[3];
@@ -155,7 +157,12 @@ public:
         float result = 0.0f;
 
         for(int i = 0 ; i < light_count ; i++){
-            sphere_pdf light_pdf( origin, g_scene_lights[i].centre, g_scene_lights[i].radius );
+            const float4 cr = g_light_center_radius[i];
+            sphere_pdf light_pdf(
+                origin,
+                vec(cr.x, cr.y, cr.z),
+                cr.w
+            );
 
             // P(select light i) * PDF(direction | light i)
             result += selection_probability * light_pdf.value(direction);
@@ -173,7 +180,12 @@ public:
             light_index = light_count - 1;
         }
 
-        sphere_pdf selected_light( origin, g_scene_lights[light_index].centre, g_scene_lights[light_index].radius);
+        const float4 cr = g_light_center_radius[light_index];
+        sphere_pdf selected_light(
+            origin,
+            vec(cr.x, cr.y, cr.z),
+            cr.w
+        );
         return selected_light.generate(local_state);
     }
 };
