@@ -338,6 +338,8 @@ The showcase samples 16 spherical lights:
 | Right-side, camera-side, and floor fills | 10 | Illumination-only samples; no visible floating spheres |
 | **Total** | **16** | |
 
+Broad neutral fills are kept low to preserve the dark atrium; warm and cyan practicals provide localized color, with display exposure set to `0.35` to protect the highlights.
+
 At each non-delta surface, one light is selected with probability proportional to its approximate emitted power. A point on that sphere is sampled, and a shadow ray checks visibility before the direct contribution is added. Diffuse continuation uses a cosine-weighted PDF, and its next-hit emission is suppressed to avoid counting the NEE contribution twice.
 
 ```text
@@ -464,11 +466,11 @@ One `curandState` is stored per pixel and persists between rendering batches.
 The showcase currently uses:
 
 ```cpp
-const int samples_per_pixel = 64;
+const int samples_per_pixel = 128;
 const int samples_per_batch = samples_per_pixel;
 ```
 
-so the default validation render uses one 64-SPP batch.
+so the default reference render uses one 128-SPP batch.
 
 For longer renders on a display-attached Windows GPU, a batch size of 16 or 32 can be used without changing the total target SPP.
 
@@ -506,7 +508,7 @@ The ten immutable spherical-light records are uploaded once to CUDA constant mem
 
 ### Reduced launch overhead
 
-The default 64-SPP preset uses one render launch instead of repeatedly launching 8-SPP batches.
+The default 128-SPP preset uses one render launch instead of repeatedly launching 8-SPP batches.
 
 ### Binary PPM output
 
@@ -590,8 +592,8 @@ Depth of field remains implemented and can be enabled by increasing the aperture
 | Image width | `1500` | Output width |
 | Image height | `613` | Derived from 22:9 aspect ratio |
 | Aspect ratio | `22:9` | Wide cinematic composition |
-| Samples per pixel | `64` | Current showcase / validation quality |
-| Samples per batch | `64` | One default batch |
+| Samples per pixel | `128` | Current reference-matched showcase quality |
+| Samples per batch | `128` | One default batch |
 | Max path depth | `30` | Hard path-length limit |
 | Russian roulette start | `4` | Start depth for probabilistic termination |
 | CUDA block | `8 × 8` | Current render-kernel block size |
