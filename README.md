@@ -96,9 +96,9 @@ CUDA Ray Tracer
 | 🌳 BVH | Hierarchical scene traversal that rejects large groups of primitives. |
 | 📦 AABB | Slab-based bounding-box intersection for BVH nodes. |
 | 🌤️ Lambertian | Cosine-weighted diffuse importance sampling. |
-| 💡 Multiple Lights | Ten sampled spherical lights in the showcase scene. |
-| 📐 Mixture PDFs | Cosine + spherical-light sampling for diffuse paths. |
-| 🔦 NEE | Explicit direct-light estimation with shadow rays. |
+| 💡 Multiple Lights | Six visible emitters plus ten illumination-only area-light samples. |
+| 📐 Diffuse Sampling | Cosine-weighted path continuation. |
+| 🔦 NEE | Power-weighted direct estimation with shadow rays on diffuse and glossy surfaces. |
 | ✨ GGX / Cook-Torrance | Microfacet metallic BRDF with Fresnel and Smith masking. |
 | 💎 Dielectric | Reflection, refraction, Fresnel, and total internal reflection. |
 | 🔆 Emission | Emissive materials and visible architectural light accents. |
@@ -157,18 +157,18 @@ The default beauty preset intentionally avoids heavy atmospheric haze.
 
 ## Scene Geometry
 
-The current architectural layer contains **65 top-level solids**:
+The current architectural layer contains **82 top-level solids**:
 
 | Geometry | Count |
 |---|---:|
-| Cuboids | 50 |
+| Cuboids | 67 |
 | Standalone triangle faces | 12 |
 | Triangular-prism objects | 3 |
-| **Top-level architectural solids** | **65** |
+| **Top-level architectural solids** | **82** |
 
 Each triangular prism contains eight internal triangles, but is represented as one top-level compound object.
 
-The scene also contains a deliberately positioned spherical layer and the ten spherical light sources.
+The scene also contains a deliberately positioned spherical layer and 16 spherical light samples. Six are visible emitter geometry (the overhead key and five stair lights); the remaining ten are illumination-only samples and do not create floating visible orbs.
 
 ---
 
@@ -229,7 +229,7 @@ The scene also contains a deliberately positioned spherical layer and the ten sp
                         GPU -> CPU Copy
                               |
                               v
-                     Gamma / 8-bit Output
+                Tone Mapping / Gamma / 8-bit Output
                               |
                               v
                           image.ppm
@@ -311,40 +311,34 @@ This keeps the main render clean and avoids unnecessary stochastic volume work a
 
 ## Importance Sampling
 
-For diffuse surfaces, the renderer combines two distributions:
+Diffuse surfaces use cosine-weighted sampling:
 
 ```text
-                       Mixture PDF
-                           |
-                 +---------+---------+
-                 |                   |
-                50%                 50%
-                 |                   |
-                 v                   v
-        Cosine-weighted       Spherical-light
-           sampling              sampling
+                Cosine PDF
+                    |
+                    v
+            Diffuse continuation
 ```
 
 \[
-p(\omega)=\frac12p_{cosine}(\omega)+\frac12p_{light}(\omega)
+p(\omega)=\frac{\cos\theta}{\pi}
 \]
 
-The same mixture PDF used to generate the direction is evaluated again when computing the Monte Carlo weight.
+Direct illumination is estimated separately with one power-weighted area-light sample and a visibility ray per non-delta surface.
 
 ---
 
 ## Multiple-Light Sampling and NEE
 
-The showcase uses ten sampled spherical lights:
+The showcase samples 16 spherical lights:
 
 | Group | Count | Purpose |
 |---|---:|---|
-| Central key | 1 | Main illumination and hero lighting |
-| Staircase lights | 5 | Warm local lighting along the staircase |
-| Right-side lights | 4 | Cool grazing lighting for sculptures and machinery |
-| **Total** | **10** | |
+| Overhead key and staircase emitters | 6 | Visible emitter geometry |
+| Right-side, camera-side, and floor fills | 10 | Illumination-only samples; no visible floating spheres |
+| **Total** | **16** | |
 
-For explicit Next Event Estimation, a single spherical light is selected, a point on that light is sampled, and a shadow ray checks visibility before the direct contribution is added.
+At each non-delta surface, one light is selected with probability proportional to its approximate emitted power. A point on that sphere is sampled, and a shadow ray checks visibility before the direct contribution is added. Diffuse continuation uses a cosine-weighted PDF, and its next-hit emission is suppressed to avoid counting the NEE contribution twice.
 
 ```text
 Surface Hit
@@ -603,7 +597,7 @@ Depth of field remains implemented and can be enabled by increasing the aperture
 | CUDA block | `8 × 8` | Current render-kernel block size |
 | Vertical FOV | `58°` | Camera field of view |
 | Aperture | `0.0` | Depth of field disabled |
-| Sampled spherical lights | `10` | Light-sampling set |
+| Sampled spherical lights | `16` | Visible emitters and illumination-only NEE samples |
 | Volumetrics | `0` | Disabled for the beauty preset |
 | Output | `image.ppm` | Binary P6 PPM |
 
@@ -638,10 +632,11 @@ After rendering:
 1. the framebuffer is copied from GPU to CPU memory
 2. accumulated radiance is averaged by SPP
 3. NaN values are sanitized
-4. values are clamped
-5. gamma correction is applied
-6. RGB values are converted to 8-bit
-7. the result is written to `image.ppm`
+4. exposure and saturation are adjusted
+5. ACES tone mapping rolls off highlights
+6. gamma correction is applied
+7. RGB values are converted to 8-bit
+8. the result is written to `image.ppm`
 
 The renderer writes binary PPM (`P6`).
 
@@ -874,9 +869,9 @@ The renderer includes:
 | Emission | Emissive materials |
 | Light sources | Multiple spherical lights |
 | Diffuse sampling | Cosine-weighted |
-| Light sampling | Spherical-light sampling |
-| PDF strategy | 50/50 mixture PDF |
-| Direct lighting | Next Event Estimation |
+| Light sampling | Power-weighted spherical-light sampling |
+| PDF strategy | Cosine-weighted diffuse continuation |
+| Direct lighting | Next Event Estimation on diffuse and glossy surfaces |
 | Termination | Russian roulette + max depth |
 | Acceleration | BVH + AABB |
 | Geometry | Sphere, cuboid, triangle, triangular prism |

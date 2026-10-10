@@ -37,6 +37,13 @@ inline float de_nan(float f){
 inline float clamp01(float f){
     return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
 }
+inline float tone_map_aces(float x){
+    x = fminf(fmaxf(x, 0.0f), 1.0e6f);
+    return clamp01(
+        (x * (2.51f * x + 0.03f)) /
+        (x * (2.43f * x + 0.59f) + 0.14f)
+    );
+}
 
 class rotate_y : public hittable {
 public:
@@ -300,13 +307,95 @@ public:
 // Path tracer core
 //
 // Lighting model:
-//   * One central white spherical key light.
-//   * Several small local spherical lights (staircase + right-side cluster).
-//   * Lambertian surfaces use 50/50 cosine + multi-light PDF sampling.
-//   * Non-PDF materials use explicit one-light NEE: exactly one light is
-//     selected per bounce, so the cost remains close to the previous single-
-//     light implementation instead of tracing one shadow ray per light.
+//   * Diffuse and glossy surfaces use one-light next-event estimation.
+//   * Light selection is importance-weighted by emitted power.
+//   * Diffuse continuation uses cosine-weighted sampling; sampled emission is
+//     suppressed after non-delta bounces to avoid counting direct light twice.
 // -----------------------------------------------------------------------------
+__device__ vec estimate_direct_lighting(
+    const hit_record& rec,
+    const ray& curr_ray,
+    hittable** world,
+    curandState* local_state,
+    int light_count
+){
+    if(light_count <= 0){
+        return vec(0.0f, 0.0f, 0.0f);
+    }
+
+    const float choice = curand_uniform(local_state);
+    int light_index = light_count - 1;
+    float previous_cdf = 0.0f;
+
+    for(int i = 0; i < light_count; ++i){
+        const float cdf = g_light_selection_cdf[i];
+        if(choice <= cdf){
+            light_index = i;
+            break;
+        }
+        previous_cdf = cdf;
+    }
+
+    const float selection_probability =
+        g_light_selection_cdf[light_index] - previous_cdf;
+    if(selection_probability <= 0.0f){
+        return vec(0.0f, 0.0f, 0.0f);
+    }
+
+    const float4 light_cr = g_light_center_radius[light_index];
+    const float4 light_em = g_light_emission[light_index];
+    const vec light_centre(light_cr.x, light_cr.y, light_cr.z);
+    const float light_radius = light_cr.w;
+    const vec light_emission(light_em.x, light_em.y, light_em.z);
+
+    const vec light_point = sample_light_point(
+        light_centre,
+        light_radius,
+        local_state
+    );
+    const vec to_light = light_point - rec.p;
+    const float distance = to_light.length();
+    if(distance <= 1e-6f){
+        return vec(0.0f, 0.0f, 0.0f);
+    }
+
+    const vec wi = to_light / distance;
+    const float NdotL = rec.mat->is_volumetric()
+                      ? 1.0f
+                      : fmaxf(0.0f, dot(rec.normal, wi));
+    if(NdotL <= 0.0f){
+        return vec(0.0f, 0.0f, 0.0f);
+    }
+
+    const vec light_normal = unit_vector(light_point - light_centre);
+    const float light_costheta = fmaxf(0.0f, dot(light_normal, -wi));
+    if(light_costheta <= 0.0f){
+        return vec(0.0f, 0.0f, 0.0f);
+    }
+
+    const ray shadow_ray(rec.p, wi);
+    hit_record shadow_rec;
+    if((*world)->hit(
+        shadow_ray,
+        0.001f,
+        distance - 0.001f,
+        shadow_rec,
+        local_state
+    )){
+        return vec(0.0f, 0.0f, 0.0f);
+    }
+
+    const vec wo = -unit_vector(curr_ray.direction());
+    const vec brdf = rec.mat->evaluate_brdf(wi, wo, rec);
+    const float light_area =
+        4.0f * 3.14159265359f * light_radius * light_radius;
+    const float joint_area_pdf = selection_probability / light_area;
+
+    return brdf * light_emission *
+        ((NdotL * light_costheta) /
+        (distance * distance * joint_area_pdf));
+}
+
 __device__ vec ray_color(
     const ray& r,
     hittable** world,
@@ -318,9 +407,8 @@ __device__ vec ray_color(
 
     ray curr_ray = r;
 
-    // Camera rays may directly see an emissive sphere. A Lambertian/light-PDF
-    // sampled bounce also relies on the next ray potentially landing on a light,
-    // so emission must be collected on that next hit.
+    // Camera rays and delta reflections may directly see emissive geometry.
+    // Non-delta bounces instead receive direct light from next-event estimation.
     bool add_emission = true;
 
     const int max_depth = 30;
@@ -335,21 +423,22 @@ __device__ vec ray_color(
                 accumulated_light += curr_attenuated * rec.mat->emitted();
             }
 
+            accumulated_light += curr_attenuated * estimate_direct_lighting(
+                rec,
+                curr_ray,
+                world,
+                local_state,
+                light_count
+            );
+
             // -----------------------------------------------------------------
-            // Lambertian / PDF path
-            // -----------------------------------------------------------------
-            // 50% cosine-weighted sampling + 50% uniformly selected spherical
-            // light.  multi_mixture_pdf.value() exactly matches its generator.
+            // Cosine-weighted diffuse continuation.
             // -----------------------------------------------------------------
             if(rec.mat->uses_pdf_sampling()){
                 cosine_pdf cos_pdf(rec.normal);
 
-                multi_sphere_pdf lgt_pdf(rec.p, light_count);
-
-                multi_mixture_pdf mix_pdf(cos_pdf, lgt_pdf);
-
-                vec scatter_dir = mix_pdf.generate(local_state);
-                float pdf_val = mix_pdf.value(scatter_dir);
+                vec scatter_dir = cos_pdf.generate(local_state);
+                float pdf_val = cos_pdf.value(scatter_dir);
 
                 if(pdf_val < 1e-6f){
                     return accumulated_light;
@@ -367,99 +456,11 @@ __device__ vec ray_color(
 
                 curr_attenuated *= brdf * (cosine / pdf_val);
                 curr_ray = ray(rec.p, scatter_dir);
-
-                // A sampled light direction can directly hit an emissive sphere,
-                // so emission on the next hit must be collected.  This is also
-                // correct for cosine-generated rays that happen to hit a light.
-                add_emission = true;
+                add_emission = false;
             }
             else{
-                // -----------------------------------------------------------------
-                // Explicit next-event estimation for non-PDF materials.
-                // Select exactly ONE light, sample one point on it, and account
-                // for the 1/N light-selection probability in the area PDF.
-                // -----------------------------------------------------------------
-                if(light_count > 0){
-                    int light_index = int(
-                        curand_uniform(local_state) * float(light_count)
-                    );
-
-                    if(light_index >= light_count){
-                        light_index = light_count - 1;
-                    }
-
-                    const float4 light_cr = g_light_center_radius[light_index];
-                    const float4 light_em = g_light_emission[light_index];
-                    const vec light_centre(light_cr.x, light_cr.y, light_cr.z);
-                    const float light_radius = light_cr.w;
-                    const vec light_emission(light_em.x, light_em.y, light_em.z);
-
-                    vec light_point = sample_light_point(
-                        light_centre,
-                        light_radius,
-                        local_state
-                    );
-
-                    vec to_light = light_point - rec.p;
-                    float distance = to_light.length();
-
-                    if(distance > 1e-6f){
-                        vec wi = to_light / distance;
-
-                        float NdotL = rec.mat->is_volumetric()
-                                    ? 1.0f
-                                    : fmaxf(0.0f, dot(rec.normal, wi));
-
-                        if(NdotL > 0.0f){
-                            vec light_normal = unit_vector(
-                                light_point - light_centre
-                            );
-
-                            float light_costheta = fmaxf(
-                                0.0f,
-                                dot(light_normal, -wi)
-                            );
-
-                            if(light_costheta > 0.0f){
-                                ray shadow_ray(rec.p, wi);
-                                hit_record shadow_rec;
-
-                                bool blocked = (*world)->hit(
-                                    shadow_ray,
-                                    0.001f,
-                                    distance - 0.001f,
-                                    shadow_rec,
-                                    local_state
-                                );
-
-                                if(!blocked){
-                                    vec wo = -unit_vector(curr_ray.direction());
-                                    vec brdf = rec.mat->evaluate_brdf(wi, wo, rec);
-
-                                    // Point was sampled uniformly by area from
-                                    // the selected light, and the selected light
-                                    // itself was chosen uniformly from N lights.
-                                    const float light_area = 4.0f * 3.14159265359f * light_radius * light_radius;
-
-                                    const float joint_area_pdf = 1.0f / (float(light_count) * light_area);
-
-                                    vec direct_light =
-                                        brdf * light_emission *
-                                        ((NdotL * light_costheta) /
-                                        (distance * distance * joint_area_pdf));
-
-                                    accumulated_light +=
-                                        curr_attenuated * direct_light;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Continue the physical path using the material's scattering
-                // model. The explicit NEE contribution above is already accounted
-                // for, so a direct emissive hit on the next bounce is not added a
-                // second time by this branch.
+                // Continue the path after next-event estimation. Delta
+                // materials still need to see emissive surfaces on reflection.
                 ray scattered;
                 vec attenuation;
 
@@ -472,10 +473,6 @@ __device__ vec ray_color(
                 )){
                     curr_attenuated *= attenuation;
                     curr_ray = scattered;
-                    // Delta materials (glass) need to be allowed to see
-                    // emissive surfaces on the next bounce. Non-delta materials
-                    // already receive direct lighting via NEE, so suppress their
-                    // next-hit emission to avoid double counting.
                     add_emission = rec.mat->is_delta();
                 }
                 else{
@@ -650,7 +647,7 @@ __global__ void clear_world(hittable** list, material** materials, int count) {
 // showcase. Optional volumetrics remain in the codebase but are disabled for this render.
 // There is no random RTIOW sphere field; spheres are deliberate secondary props.
 // ---------------------------------------------------------------------
-#define NUM_EXTRA_CUBOIDS 66
+#define NUM_EXTRA_CUBOIDS 67
 #define NUM_EXTRA_TRIANGLE_FACES 12
 #define NUM_EXTRA_TRIANGULAR_PRISMS 3
 #define NUM_EXTRA_SOLIDS (NUM_EXTRA_CUBOIDS + NUM_EXTRA_TRIANGLE_FACES + NUM_EXTRA_TRIANGULAR_PRISMS)
@@ -674,7 +671,7 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
 
     // 1. Reflective floor.
-    extra_materials[m] = new metal(vec(0.50f, 0.52f, 0.54f), 0.055f);
+    extra_materials[m] = new metal(vec(0.50f, 0.52f, 0.54f), 0.12f);
     cuboid_boundaries[c] = new cuboid(
         vec(-10.0f, 0.0f, -20.0f), vec(10.0f, 0.22f, 2.0f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 0.0f, 0.0f), 0.0f);
@@ -925,16 +922,17 @@ __global__ void create_extra_geometry(
     // differ from their apparent image-space slopes.
 
     // LEFT foreground brace: approximately (-9.45,-8.41) -> (-4.08,-0.64)
-    // in world X-Z at top surface y ~= 0.50.
+    // in world X-Z at top surface y ~= 0.50. Bounds are world-space and
+    // centered on the pivot before rotation.
     extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.16f);
     {
         const float L = 9.44f;
         const float W = 0.34f;
-        const float ang = 55.3f;
+        const float ang = -55.3f;
         const vec center(-6.76f, 0.37f, -4.53f);
         cuboid_boundaries[c] = new cuboid(
-            vec(-L*0.5f, 0.22f, -W*0.5f),
-            vec( L*0.5f, 0.50f,  W*0.5f),
+            vec(center.x() - L*0.5f, 0.22f, center.z() - W*0.5f),
+            vec(center.x() + L*0.5f, 0.50f, center.z() + W*0.5f),
             extra_materials[m]);
         final_shapes[m] = new rotate_y(cuboid_boundaries[c], center, ang);
     }
@@ -946,11 +944,11 @@ __global__ void create_extra_geometry(
     {
         const float L = 5.09f;
         const float W = 0.34f;
-        const float ang = 54.6f;
+        const float ang = -54.6f;
         const vec center(4.97f, 0.37f, -9.70f);
         cuboid_boundaries[c] = new cuboid(
-            vec(-L*0.5f, 0.22f, -W*0.5f),
-            vec( L*0.5f, 0.50f,  W*0.5f),
+            vec(center.x() - L*0.5f, 0.22f, center.z() - W*0.5f),
+            vec(center.x() + L*0.5f, 0.50f, center.z() + W*0.5f),
             extra_materials[m]);
         final_shapes[m] = new rotate_y(cuboid_boundaries[c], center, ang);
     }
@@ -1111,6 +1109,18 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(8.81f, 4.55f, -18.98f), 0.0f);
     ++m; ++c;
 
+    // Ceiling mount keeps the overhead key light visibly attached to the room.
+    extra_materials[m] = new metal(vec(0.16f, 0.18f, 0.22f), 0.20f);
+    cuboid_boundaries[c] = new cuboid(
+        vec(0.72f, 7.20f, -8.95f),
+        vec(0.98f, 7.70f, -8.55f),
+        extra_materials[m]);
+    final_shapes[m] = new rotate_y(
+        cuboid_boundaries[c],
+        vec(0.85f, 7.45f, -8.75f),
+        0.0f);
+    ++m; ++c;
+
     // -----------------------------------------------------------------
     // TRIANGLE HERO ASSEMBLIES
     // -----------------------------------------------------------------
@@ -1211,7 +1221,7 @@ __global__ void create_extra_geometry(
     ++m;
 
     // The constants above match the actual solids constructed here:
-    // 66 cuboids + 12 individual triangle faces + 3 triangular prisms = 81 solids.
+    // 67 cuboids + 12 individual triangle faces + 3 triangular prisms = 82 solids.
     if(m != NUM_EXTRA_SOLIDS || c != NUM_EXTRA_CUBOIDS){
         printf("Scene geometry count mismatch: materials/shapes=%d expected=%d, cuboids=%d expected=%d\n",
                m, NUM_EXTRA_SOLIDS, c, NUM_EXTRA_CUBOIDS);
@@ -1316,7 +1326,7 @@ __global__ void create_volumetrics(
     ++idx;
 
     // 6. Soft haze around the main overhead light.
-    fog_boundaries[idx] = new sphere(vec(0.0f, 6.65f, -9.15f), 1.70f, nullptr);
+    fog_boundaries[idx] = new sphere(vec(0.85f, 6.45f, -8.75f), 1.70f, nullptr);
     fog_materials[idx] = new isotropic(vec(0.86f, 0.90f, 0.96f));
     fog_media[idx] = new constant_medium(fog_boundaries[idx], 0.006f, fog_materials[idx]);
     ++idx;
@@ -1384,7 +1394,7 @@ int main(){
     // The central key is slightly smaller on camera than the first reference
     // approximation; the brighter near-field fills are responsible for
     // restoring readable architecture and floor reflections.
-    const vec central_light_centre(0.85f, 6.45f, -9.15f);
+    const vec central_light_centre(0.85f, 6.45f, -8.75f);
     const float central_light_radius = 0.78f;
     const vec central_light_emission(84.0f, 78.0f, 71.0f);
 
@@ -1530,8 +1540,8 @@ int main(){
     // secondary material demonstrations rather than a random RTIOW field.
     const vec hero_spheres[3] = {
         vec(0.90f, 1.80f, -8.85f),     // chrome orb seated on central platform (top y=0.68)
-        vec(7.10f, 0.92f, -14.55f),    // large chrome sphere in the lower-right foreground
-        vec(-1.35f, 0.94f, -5.70f)     // foreground glass sphere seated on floor
+        vec(7.10f, 0.88f, -14.55f),    // chrome sphere seated on the floor
+        vec(-1.35f, 0.94f, -5.30f)     // foreground glass sphere clear of the platform
     };
 
     // Central nearly-perfect chrome orb: the primary focal point.
@@ -1567,27 +1577,27 @@ int main(){
     // Keep the visible sphere population sparse and intentional, matching the
     // reference instead of scattering extra balls through the foreground.
     h_scene.push_back({
-        vec(-6.95f, 0.46f, -2.88f), 0.46f,
+        vec(-6.95f, 0.68f, -2.88f), 0.46f,
         MAT_LAMBERTIAN, vec(0.72f, 0.10f, 0.045f), 0.0f
     });
 
     h_scene.push_back({
-        vec(-8.45f, 0.46f, -5.45f), 0.26f,
+        vec(-8.45f, 0.48f, -5.45f), 0.26f,
         MAT_METAL, vec(0.62f, 0.34f, 0.10f), 0.16f
     });
 
     h_scene.push_back({
-        vec(-2.90f, 0.94f, -6.50f), 0.72f,
+        vec(-3.70f, 0.94f, -5.00f), 0.72f,
         MAT_DIELECTRIC, vec(1.0f, 1.0f, 1.0f), 1.50f
     });
 
     h_scene.push_back({
-        vec(7.75f, 0.62f, -8.90f), 0.36f,
+        vec(7.75f, 0.58f, -8.90f), 0.36f,
         MAT_METAL, vec(0.72f, 0.75f, 0.80f), 0.08f
     });
 
     h_scene.push_back({
-        vec(6.65f, 0.58f, -4.90f), 0.44f,
+        vec(6.65f, 0.66f, -4.90f), 0.44f,
         MAT_METAL, vec(0.55f, 0.58f, 0.64f), 0.10f
     });
 
@@ -1689,6 +1699,30 @@ int main(){
         final_bvh_node_count * sizeof(bvh_node)
     ));
 
+    // Importance-sample lights in proportion to approximate emitted power.
+    std::vector<float> light_weights(light_count);
+    float total_light_weight = 0.0f;
+    for(int i = 0; i < light_count; ++i){
+        const vec emission = h_lights[i].emission;
+        const float luminance =
+            0.2126f * emission.x() +
+            0.7152f * emission.y() +
+            0.0722f * emission.z();
+        light_weights[i] = fmaxf(
+            h_lights[i].area * luminance,
+            1e-6f
+        );
+        total_light_weight += light_weights[i];
+    }
+
+    std::vector<float> h_light_selection_cdf(light_count);
+    float cumulative_light_weight = 0.0f;
+    for(int i = 0; i < light_count; ++i){
+        cumulative_light_weight += light_weights[i] / total_light_weight;
+        h_light_selection_cdf[i] =
+            (i == light_count - 1) ? 1.0f : cumulative_light_weight;
+    }
+
     // Upload the small light table once. Built-in float4 records are trivially
     // constructible, so CUDA can place them directly in constant memory.
     std::vector<float4> h_light_center_radius(light_count);
@@ -1720,6 +1754,12 @@ int main(){
         g_light_emission,
         h_light_emission.data(),
         light_count * sizeof(float4)
+    ));
+
+    CUDA_CHECK(cudaMemcpyToSymbol(
+        g_light_selection_cdf,
+        h_light_selection_cdf.data(),
+        light_count * sizeof(float)
     ));
 
     // Extra architectural layer.
@@ -1932,23 +1972,21 @@ int main(){
             int pixel_index = j * image_width + i;
             vec pixel_color = h_fb[pixel_index];
 
-            // Mild final color grade: a slightly warmer neutral balance and
-            // restrained saturation to move the render toward the target
-            // reference without changing scene geometry or lighting layout.
-            constexpr float display_exposure = 1.28f;
-            float r_ = display_exposure * 1.04f * de_nan(pixel_color.x()) / float(samples_per_pixel);
-            float g_ = display_exposure * 1.00f * de_nan(pixel_color.y()) / float(samples_per_pixel);
-            float b_ = display_exposure * 0.97f * de_nan(pixel_color.z()) / float(samples_per_pixel);
+            // Preserve neon color while rolling off bright emitters smoothly.
+            constexpr float display_exposure = 1.10f;
+            float r_ = display_exposure * de_nan(pixel_color.x()) / float(samples_per_pixel);
+            float g_ = display_exposure * de_nan(pixel_color.y()) / float(samples_per_pixel);
+            float b_ = display_exposure * de_nan(pixel_color.z()) / float(samples_per_pixel);
 
             const float grade_luma = 0.2126f * r_ + 0.7152f * g_ + 0.0722f * b_;
-            constexpr float saturation = 1.06f;
+            constexpr float saturation = 1.16f;
             r_ = grade_luma + (r_ - grade_luma) * saturation;
             g_ = grade_luma + (g_ - grade_luma) * saturation;
             b_ = grade_luma + (b_ - grade_luma) * saturation;
 
-            r_ = sqrtf(clamp01(r_));
-            g_ = sqrtf(clamp01(g_));
-            b_ = sqrtf(clamp01(b_));
+            r_ = powf(tone_map_aces(r_), 1.0f / 2.2f);
+            g_ = powf(tone_map_aces(g_), 1.0f / 2.2f);
+            b_ = powf(tone_map_aces(b_), 1.0f / 2.2f);
 
             const int output_row = image_height - 1 - j;
             size_t out_idx = (size_t(output_row) * size_t(image_width) + size_t(i)) * 3;

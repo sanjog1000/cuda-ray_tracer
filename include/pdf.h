@@ -18,6 +18,8 @@ struct scene_light{
 
 __constant__ float4 g_light_center_radius[MAX_SCENE_LIGHTS];
 __constant__ float4 g_light_emission[MAX_SCENE_LIGHTS];
+// Cumulative distribution used by next-event light selection.
+__constant__ float g_light_selection_cdf[MAX_SCENE_LIGHTS];
 
 struct onb{
     vec axis[3];
