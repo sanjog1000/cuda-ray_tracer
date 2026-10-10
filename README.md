@@ -104,6 +104,7 @@ CUDA Ray Tracer
 | 🔆 Emission | Emissive materials and visible architectural light accents. |
 | 🎲 Russian Roulette | Probabilistic termination of low-contribution paths. |
 | 🔺 Custom Geometry | Triangles, triangular prisms, and rotated objects. |
+| 🧹 Floor Denoising | Edge-aware output filtering reduces path noise on the reflective foreground floor. |
 | 🎰 CURAND | Persistent per-pixel random states. |
 | 🧠 GPU Scene Construction | Device-side construction of geometry/material objects. |
 | 🚀 GPU Optimizations | BVH traversal, cached inverse directions, precomputed triangle data, constant-memory lights, and reduced launch overhead. |
@@ -338,7 +339,7 @@ The showcase samples 16 spherical lights:
 | Right-side, camera-side, and floor fills | 10 | Illumination-only samples; no visible floating spheres |
 | **Total** | **16** | |
 
-Broad neutral fills are kept low to preserve the dark atrium; warm and cyan practicals provide localized color, with display exposure set to `0.35` to protect the highlights.
+Broad neutral fills are kept low to preserve the dark atrium; warm and cyan practicals provide localized color. Display exposure is `0.55` with a modest saturation boost, and an edge-aware filter is applied only to the reflective foreground floor.
 
 At each non-delta surface, one light is selected with probability proportional to its approximate emitted power. A point on that sphere is sampled, and a shadow ray checks visibility before the direct contribution is added. Diffuse continuation uses a cosine-weighted PDF, and its next-hit emission is suppressed to avoid counting the NEE contribution twice.
 
@@ -638,7 +639,8 @@ After rendering:
 5. ACES tone mapping rolls off highlights
 6. gamma correction is applied
 7. RGB values are converted to 8-bit
-8. the result is written to `image.ppm`
+8. edge-aware denoising is applied to the foreground floor
+9. the result is written to `image.ppm`
 
 The renderer writes binary PPM (`P6`).
 
@@ -902,7 +904,7 @@ Potential next steps include:
 - GPU-native BVH construction
 - texture and normal mapping
 - HDR image output
-- denoising
+- full-frame denoising
 - CUDA streams and asynchronous execution
 - persistent kernels
 - deeper occupancy and register optimization

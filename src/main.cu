@@ -671,7 +671,7 @@ __global__ void create_extra_geometry(
     // -----------------------------------------------------------------
 
     // 1. Reflective floor.
-    extra_materials[m] = new metal(vec(0.50f, 0.52f, 0.54f), 0.12f);
+    extra_materials[m] = new metal(vec(0.28f, 0.30f, 0.34f), 0.055f);
     cuboid_boundaries[c] = new cuboid(
         vec(-10.0f, 0.0f, -20.0f), vec(10.0f, 0.22f, 2.0f), extra_materials[m]);
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(0.0f, 0.0f, 0.0f), 0.0f);
@@ -914,12 +914,9 @@ __global__ void create_extra_geometry(
     final_shapes[m] = new rotate_y(cuboid_boundaries[c], vec(-2.75f, 0.96f, -8.05f), 28.0f);
     ++m; ++c;
 
-    // 34-35. Foreground diagonal V-braces.
-    // These are reconstructed from the reference image in camera space.
-    // With the final camera below, the projected right brace is approximately
-    // 23 degrees downward to the right and the left brace approximately 24
-    // degrees upward to the right.  Their world-space yaw values therefore
-    // differ from their apparent image-space slopes.
+    // 34. Left foreground diagonal brace; 35. low-profile rail at the right
+    // machinery base. The right-side diagonal brace obscured the floor and
+    // read as a disconnected V-shaped structure in the camera view.
 
     // LEFT foreground brace: approximately (-9.45,-8.41) -> (-4.08,-0.64)
     // in world X-Z at top surface y ~= 0.50. Bounds are world-space and
@@ -938,14 +935,13 @@ __global__ void create_extra_geometry(
     }
     ++m; ++c;
 
-    // RIGHT foreground brace: approximately (3.50,-11.77) -> (6.45,-7.63)
-    // in world X-Z at top surface y ~= 0.50.
-    extra_materials[m] = new metal(vec(0.42f, 0.45f, 0.50f), 0.16f);
+    // Short low-profile foot rail ties into the front of the right machinery.
+    extra_materials[m] = new metal(vec(0.24f, 0.27f, 0.32f), 0.25f);
     {
-        const float L = 5.09f;
-        const float W = 0.34f;
-        const float ang = -54.6f;
-        const vec center(4.97f, 0.37f, -9.70f);
+        const float L = 1.45f;
+        const float W = 0.28f;
+        const float ang = 0.0f;
+        const vec center(7.60f, 0.36f, -11.43f);
         cuboid_boundaries[c] = new cuboid(
             vec(center.x() - L*0.5f, 0.22f, center.z() - W*0.5f),
             vec(center.x() + L*0.5f, 0.50f, center.z() + W*0.5f),
@@ -1970,13 +1966,13 @@ int main(){
             vec pixel_color = h_fb[pixel_index];
 
             // Keep the scene dark while retaining saturated emissive accents.
-            constexpr float display_exposure = 0.35f;
+            constexpr float display_exposure = 0.55f;
             float r_ = display_exposure * de_nan(pixel_color.x()) / float(samples_per_pixel);
             float g_ = display_exposure * de_nan(pixel_color.y()) / float(samples_per_pixel);
             float b_ = display_exposure * de_nan(pixel_color.z()) / float(samples_per_pixel);
 
             const float grade_luma = 0.2126f * r_ + 0.7152f * g_ + 0.0722f * b_;
-            constexpr float saturation = 1.16f;
+            constexpr float saturation = 1.35f;
             r_ = grade_luma + (r_ - grade_luma) * saturation;
             g_ = grade_luma + (g_ - grade_luma) * saturation;
             b_ = grade_luma + (b_ - grade_luma) * saturation;
@@ -1992,6 +1988,62 @@ int main(){
             pixels[out_idx + 2] = static_cast<unsigned char>(255.999f * b_);
         }
     }
+
+    // Edge-aware smoothing is limited to the reflective foreground floor,
+    // where path-tracing noise otherwise reads as a hazy, speckled surface.
+    {
+        constexpr int radius = 3;
+        constexpr float spatial_sigma = 3.0f;
+        constexpr float color_sigma = 45.0f;
+        const int floor_start = image_height * 56 / 100;
+        std::vector<unsigned char> denoised = pixels;
+
+        for(int y = floor_start; y < image_height; ++y){
+            for(int x = 0; x < image_width; ++x){
+                const size_t center =
+                    (size_t(y) * size_t(image_width) + size_t(x)) * 3;
+                const float center_r = pixels[center];
+                const float center_g = pixels[center + 1];
+                const float center_b = pixels[center + 2];
+                float sum_r = 0.0f;
+                float sum_g = 0.0f;
+                float sum_b = 0.0f;
+                float weight_sum = 0.0f;
+
+                for(int dy = -radius; dy <= radius; ++dy){
+                    const int sample_y =
+                        std::max(floor_start, std::min(image_height - 1, y + dy));
+                    for(int dx = -radius; dx <= radius; ++dx){
+                        const int sample_x =
+                            std::max(0, std::min(image_width - 1, x + dx));
+                        const size_t sample =
+                            (size_t(sample_y) * size_t(image_width) +
+                             size_t(sample_x)) * 3;
+                        const float dr = float(pixels[sample]) - center_r;
+                        const float dg = float(pixels[sample + 1]) - center_g;
+                        const float db = float(pixels[sample + 2]) - center_b;
+                        const float color_distance = dr*dr + dg*dg + db*db;
+                        const float spatial_distance = float(dx*dx + dy*dy);
+                        const float weight =
+                            expf(-spatial_distance /
+                                 (2.0f * spatial_sigma * spatial_sigma)) *
+                            expf(-color_distance /
+                                 (6.0f * color_sigma * color_sigma));
+                        sum_r += weight * float(pixels[sample]);
+                        sum_g += weight * float(pixels[sample + 1]);
+                        sum_b += weight * float(pixels[sample + 2]);
+                        weight_sum += weight;
+                    }
+                }
+
+                denoised[center] = static_cast<unsigned char>(sum_r / weight_sum);
+                denoised[center + 1] = static_cast<unsigned char>(sum_g / weight_sum);
+                denoised[center + 2] = static_cast<unsigned char>(sum_b / weight_sum);
+            }
+        }
+        pixels.swap(denoised);
+    }
+
     file.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
     file.close();
 
