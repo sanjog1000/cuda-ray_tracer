@@ -1391,9 +1391,8 @@ int main(){
     // -----------------------------------------------------------------
     // LIGHTING DESIGN
     // -----------------------------------------------------------------
-    // The central key is slightly smaller on camera than the first reference
-    // approximation; the brighter near-field fills are responsible for
-    // restoring readable architecture and floor reflections.
+    // Keep broad neutral fills subdued so the atrium retains dark contrast;
+    // local warm and cyan practicals provide the colored architectural accents.
     const vec central_light_centre(0.85f, 6.45f, -8.75f);
     const float central_light_radius = 0.78f;
     const vec central_light_emission(84.0f, 78.0f, 71.0f);
@@ -1491,38 +1490,36 @@ int main(){
     // floor without becoming visible spherical objects.
     h_lights.push_back({
         vec(1.10f, 4.80f, 0.80f), 2.80f,
-        4.0f * 3.14159265359f * 2.80f * 2.80f, vec(50.0f, 46.0f, 41.0f)
+        4.0f * 3.14159265359f * 2.80f * 2.80f, vec(1.0f, 0.92f, 0.82f)
     });
 
     h_lights.push_back({
         vec(-4.20f, 3.60f, 0.80f), 1.80f,
-        4.0f * 3.14159265359f * 1.80f * 1.80f, vec(24.0f, 22.0f, 20.0f)
+        4.0f * 3.14159265359f * 1.80f * 1.80f, vec(0.48f, 0.44f, 0.40f)
     });
 
     // Warm practical fill for the red/orange wall bars and staircase reflections.
     h_lights.push_back({
         vec(-0.80f, 3.30f, -7.40f), 1.55f,
-        4.0f * 3.14159265359f * 1.55f * 1.55f, vec(34.0f, 13.5f, 3.4f)
+        4.0f * 3.14159265359f * 1.55f * 1.55f, vec(2.72f, 1.08f, 0.272f)
     });
 
     // Cool practical fill for the right display shelf and its floor reflection.
     h_lights.push_back({
         vec(7.90f, 3.20f, -7.30f), 1.40f,
-        4.0f * 3.14159265359f * 1.40f * 1.40f, vec(3.0f, 13.0f, 23.0f)
+        4.0f * 3.14159265359f * 1.40f * 1.40f, vec(0.24f, 1.04f, 1.84f)
     });
 
-    // Low camera-side floor fill: directly restores the bright neutral
-    // foreground reflections without making the room globally flat.
+    // Low camera-side floor fill: a restrained neutral lift for foreground reflections.
     h_lights.push_back({
         vec(1.80f, 1.65f, 0.70f), 2.20f,
-        4.0f * 3.14159265359f * 2.20f * 2.20f, vec(34.0f, 31.0f, 28.0f)
+        4.0f * 3.14159265359f * 2.20f * 2.20f, vec(0.68f, 0.62f, 0.56f)
     });
 
-    // Low right-side cyan fill: puts colored energy into the reflective
-    // floor under the display shelf rather than only on the wall.
+    // Low right-side cyan fill colors the reflective floor under the shelf.
     h_lights.push_back({
         vec(7.60f, 1.45f, -9.80f), 1.90f,
-        4.0f * 3.14159265359f * 1.90f * 1.90f, vec(4.0f, 15.0f, 24.0f)
+        4.0f * 3.14159265359f * 1.90f * 1.90f, vec(0.32f, 1.2f, 1.92f)
     });
 
     // 1 central key + 5 stair lights + 10 right-side/front/floor sampled lights;
@@ -1898,8 +1895,8 @@ int main(){
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Cheap validation render. Increase this only after composition is approved.
-    const int samples_per_pixel = 64;
+    // Reference-matched render quality; increase further for final stills.
+    const int samples_per_pixel = 128;
     const int samples_per_batch = samples_per_pixel;
     const int num_batches =
         (samples_per_pixel + samples_per_batch - 1) /
@@ -1972,8 +1969,8 @@ int main(){
             int pixel_index = j * image_width + i;
             vec pixel_color = h_fb[pixel_index];
 
-            // Preserve neon color while rolling off bright emitters smoothly.
-            constexpr float display_exposure = 1.10f;
+            // Keep the scene dark while retaining saturated emissive accents.
+            constexpr float display_exposure = 0.35f;
             float r_ = display_exposure * de_nan(pixel_color.x()) / float(samples_per_pixel);
             float g_ = display_exposure * de_nan(pixel_color.y()) / float(samples_per_pixel);
             float b_ = display_exposure * de_nan(pixel_color.z()) / float(samples_per_pixel);
